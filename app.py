@@ -1,0 +1,2155 @@
+import streamlit as st
+import pandas as pd
+import json
+from datetime import datetime
+from typing import Dict, List, Optional
+import re
+from difflib import SequenceMatcher
+import boto3
+
+from snowflake_utils import SnowflakeConnection
+from column_mapper import ColumnMapper
+from config import load_aws_config, get_environment_name, get_config
+from transformations import apply_transformation, TRANSFORMATION_TEMPLATES, preview_transformation_step
+
+# Transformation Builder Modal
+@st.dialog("🔧 Transformation Builder", width="large")
+def transformation_builder_modal(column_name, sample_data):
+    """Modal dialog for building transformations"""
+
+    # Store that this modal is open
+    st.session_state[f"modal_open_{column_name}"] = True
+
+    st.write(f"**Transforming column:** `{column_name}`")
+
+    # Preview controls
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        with st.expander("📊 Sample Data (first 5 rows)", expanded=False):
+            for i, val in enumerate(sample_data[:5]):
+                st.caption(f"Row {i+1}: `{val}`")
+    with col2:
+        preview_count = st.number_input(
+            "Preview samples",
+            min_value=3,
+            max_value=min(50, len(sample_data)),
+            value=5,
+            step=1,
+            key=f"preview_count_{column_name}",
+            help="How many samples to show in previews"
+        )
+
+    st.divider()
+
+    # Initialize approach in session state if not exists
+    approach_key = f"modal_approach_{column_name}"
+    if approach_key not in st.session_state:
+        st.session_state[approach_key] = "Build Custom Steps"
+
+    # Choose approach (don't set index since we're using session state key)
+    approach = st.radio(
+        "Choose your approach:",
+        options=["Use Template", "Build Custom Steps"],
+        horizontal=True,
+        key=approach_key
+    )
+
+    transformation_config = None
+
+    if approach == "Use Template":
+        st.write("### Select a Template")
+
+        # Show templates with descriptions
+        template_options = ["None"] + list(TRANSFORMATION_TEMPLATES.keys())
+        transform_type = st.selectbox(
+            "Template",
+            options=template_options,
+            key=f"modal_template_{column_name}",
+            help="Choose a pre-built transformation"
+        )
+
+        if transform_type != "None":
+            transformation_config = TRANSFORMATION_TEMPLATES[transform_type]
+
+            # Show preview
+            st.write("### Preview")
+            try:
+                import pandas as pd
+                sample_series = pd.Series(sample_data[:preview_count])
+                transformed = apply_transformation(sample_series, transformation_config)
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.caption("**Before:**")
+                    for i, val in enumerate(sample_series.values):
+                        st.caption(f"  {i+1}. `{val}`")
+                with col2:
+                    st.caption("**After:**")
+                    for i, val in enumerate(transformed.values):
+                        # Handle lists specially
+                        if isinstance(val, list):
+                            st.caption(f"  {i+1}. Split into {len(val)} parts:")
+                            for idx, part in enumerate(val):
+                                st.caption(f"      [{idx}] `{part}`")
+                        else:
+                            st.caption(f"  {i+1}. `{val}`")
+            except Exception as e:
+                st.error(f"Preview error: {str(e)}")
+
+    elif approach == "Build Custom Steps":
+        st.write("### Build Transformation Steps")
+        st.caption("Add steps to transform your data. Each step shows the result.")
+
+        # Initialize steps in session state
+        step_key = f"modal_steps_{column_name}"
+        if step_key not in st.session_state:
+            st.session_state[step_key] = []
+
+        steps = st.session_state[step_key]
+
+        # Display each step
+        if steps:
+            st.write("#### Steps")
+
+            for step_idx, step in enumerate(steps):
+                with st.container(border=True):
+                    col_header, col_delete = st.columns([5, 1])
+                    with col_header:
+                        st.write(f"**Step {step_idx + 1}**")
+                    with col_delete:
+                        if st.button("🗑️", key=f"modal_delete_{column_name}_{step_idx}", help="Delete this step"):
+                            steps.pop(step_idx)
+                            st.rerun()
+
+                    col1, col2 = st.columns([1, 2])
+
+                    with col1:
+                        step_type = st.selectbox(
+                            "Operation",
+                            options=["Split", "Extract Part", "Remove Prefix", "Trim (All Spaces)", "Trim (Ends Only)", "Clean Number", "Parse Time", "IF Condition"],
+                            key=f"modal_step_type_{column_name}_{step_idx}",
+                            index=["Split", "Extract Part", "Remove Prefix", "Trim (All Spaces)", "Trim (Ends Only)", "Clean Number", "Parse Time", "IF Condition"].index(step.get('ui_type', 'Split')) if step.get('ui_type') in ["Split", "Extract Part", "Remove Prefix", "Trim (All Spaces)", "Trim (Ends Only)", "Clean Number", "Parse Time", "IF Condition"] else 0
+                        )
+
+                    with col2:
+                        # Show different inputs based on operation type
+                        if step_type == "Split":
+                            # Use text_area to preserve exact spacing
+                            delimiter = st.text_area(
+                                "Delimiter (character(s) to split on)",
+                                value=step.get('params', {}).get('delimiter', '  '),
+                                key=f"modal_delimiter_{column_name}_{step_idx}",
+                                height=50,
+                                help="Enter the exact character(s) to split on. Spaces count!"
+                            )
+                            step['type'] = 'split'
+                            step['params'] = {'delimiter': delimiter}
+                            step['ui_type'] = 'Split'
+
+                            # Show what delimiter actually is
+                            if delimiter:
+                                st.caption(f"Delimiter: `{repr(delimiter)}` ({len(delimiter)} char{'s' if len(delimiter) != 1 else ''})")
+                            else:
+                                st.warning("⚠️ Delimiter is empty!")
+
+                        elif step_type == "Extract Part":
+                            index = st.number_input(
+                                "Index (which part to extract, 0-based)",
+                                value=step.get('params', {}).get('index', 0),
+                                min_value=0,
+                                key=f"modal_index_{column_name}_{step_idx}"
+                            )
+                            step['type'] = 'extract_index'
+                            step['params'] = {'index': index}
+                            step['ui_type'] = 'Extract Part'
+
+                        elif step_type == "Remove Prefix":
+                            prefix = st.text_input(
+                                "Prefix to remove",
+                                value=step.get('params', {}).get('prefix', ''),
+                                key=f"modal_prefix_{column_name}_{step_idx}",
+                                placeholder="e.g. 'Channel: '"
+                            )
+                            step['type'] = 'remove_prefix'
+                            step['params'] = {'prefix': prefix}
+                            step['ui_type'] = 'Remove Prefix'
+
+                        elif step_type == "Trim (All Spaces)":
+                            step['type'] = 'trim_all'
+                            step['params'] = {}
+                            step['ui_type'] = 'Trim (All Spaces)'
+                            st.caption("Removes all spaces from text")
+
+                        elif step_type == "Trim (Ends Only)":
+                            step['type'] = 'trim_ends'
+                            step['params'] = {}
+                            step['ui_type'] = 'Trim (Ends Only)'
+                            st.caption("Removes leading/trailing spaces")
+
+                        elif step_type == "Clean Number":
+                            step['type'] = 'clean_numeric'
+                            step['params'] = {}
+                            step['ui_type'] = 'Clean Number'
+                            st.caption("Removes $, %, commas")
+
+                        elif step_type == "Parse Time":
+                            unit = st.selectbox(
+                                "Output unit",
+                                options=["hours", "minutes"],
+                                key=f"modal_time_unit_{column_name}_{step_idx}"
+                            )
+                            step['type'] = 'parse_time'
+                            step['params'] = {'output_unit': unit}
+                            step['ui_type'] = 'Parse Time'
+
+                        elif step_type == "IF Condition":
+                            st.write("**Conditional Logic:**")
+
+                            # Condition type and value
+                            cond_col1, cond_col2 = st.columns([1, 2])
+                            with cond_col1:
+                                cond_type = st.selectbox(
+                                    "Condition",
+                                    options=["Contains", "Starts With", "Ends With", "Equals", "Regex Match"],
+                                    key=f"modal_if_cond_type_{column_name}_{step_idx}",
+                                    index=["Contains", "Starts With", "Ends With", "Equals", "Regex Match"].index(step.get('condition', {}).get('ui_type', 'Contains')) if step.get('condition', {}).get('ui_type') in ["Contains", "Starts With", "Ends With", "Equals", "Regex Match"] else 0
+                                )
+                            with cond_col2:
+                                check_value = st.text_input(
+                                    "Value to check",
+                                    value=step.get('condition', {}).get('value', ''),
+                                    key=f"modal_if_cond_value_{column_name}_{step_idx}",
+                                    placeholder='e.g., "Channel:" or "_"'
+                                )
+
+                            # Map UI type to internal type
+                            type_map = {
+                                "Contains": "contains",
+                                "Starts With": "starts_with",
+                                "Ends With": "ends_with",
+                                "Equals": "equals",
+                                "Regex Match": "regex_match"
+                            }
+
+                            if 'condition' not in step:
+                                step['condition'] = {}
+                            step['condition']['type'] = type_map[cond_type]
+                            step['condition']['value'] = check_value
+                            step['condition']['ui_type'] = cond_type
+                            step['type'] = 'conditional'
+                            step['ui_type'] = 'IF Condition'
+
+                            # Initialize conditions list if needed
+                            if 'conditions' not in step:
+                                step['conditions'] = [{
+                                    'type': step['condition']['type'],
+                                    'value': step['condition']['value'],
+                                    'steps': []
+                                }]
+                            else:
+                                # Update the first condition with current values
+                                step['conditions'][0]['type'] = step['condition']['type']
+                                step['conditions'][0]['value'] = step['condition']['value']
+
+                            # Show match count and samples
+                            if check_value:
+                                matching_samples = []
+                                non_matching_samples = []
+
+                                for val in sample_data:
+                                    val_str = str(val)
+                                    matched = False
+
+                                    if step['condition']['type'] == 'contains':
+                                        matched = check_value in val_str
+                                    elif step['condition']['type'] == 'starts_with':
+                                        matched = val_str.startswith(check_value)
+                                    elif step['condition']['type'] == 'ends_with':
+                                        matched = val_str.endswith(check_value)
+                                    elif step['condition']['type'] == 'equals':
+                                        matched = val_str == check_value
+                                    elif step['condition']['type'] == 'regex_match':
+                                        import re
+                                        matched = bool(re.search(check_value, val_str))
+
+                                    if matched:
+                                        matching_samples.append(val)
+                                    else:
+                                        non_matching_samples.append(val)
+
+                                match_col1, match_col2 = st.columns(2)
+                                with match_col1:
+                                    st.info(f"✓ **{len(matching_samples)}** match")
+                                    if matching_samples:
+                                        with st.expander(f"Preview ({min(preview_count, len(matching_samples))} samples)"):
+                                            for i, sample in enumerate(matching_samples[:preview_count]):
+                                                st.caption(f"{i+1}. `{sample}`")
+                                with match_col2:
+                                    st.warning(f"✗ **{len(non_matching_samples)}** don't match")
+                                    if non_matching_samples:
+                                        with st.expander(f"Preview ({min(preview_count, len(non_matching_samples))} samples)"):
+                                            for i, sample in enumerate(non_matching_samples[:preview_count]):
+                                                st.caption(f"{i+1}. `{sample}`")
+
+                            # THEN steps section
+                            st.write("**THEN** (for matching rows):")
+
+                            if 'steps' not in step['conditions'][0]:
+                                step['conditions'][0]['steps'] = []
+
+                            then_steps = step['conditions'][0]['steps']
+
+                            for then_idx, then_step in enumerate(then_steps):
+                                with st.container(border=True):
+                                    then_col1, then_col2 = st.columns([5, 1])
+                                    with then_col1:
+                                        st.caption(f"**Step {then_idx + 1}**")
+                                    with then_col2:
+                                        if st.button("×", key=f"del_then_{column_name}_{step_idx}_{then_idx}"):
+                                            then_steps.pop(then_idx)
+                                            st.rerun()
+
+                                    # Edit the step inline
+                                    then_step_type = st.selectbox(
+                                        "Operation",
+                                        options=["Split", "Extract Part", "Remove Prefix", "Trim (All Spaces)", "Trim (Ends Only)"],
+                                        key=f"then_type_{column_name}_{step_idx}_{then_idx}",
+                                        index=["Split", "Extract Part", "Remove Prefix", "Trim (All Spaces)", "Trim (Ends Only)"].index(then_step.get('ui_type', 'Split')) if then_step.get('ui_type') in ["Split", "Extract Part", "Remove Prefix", "Trim (All Spaces)", "Trim (Ends Only)"] else 0
+                                    )
+
+                                    # Configure based on type
+                                    if then_step_type == "Split":
+                                        delimiter = st.text_input(
+                                            "Delimiter",
+                                            value=then_step.get('params', {}).get('delimiter', '  '),
+                                            key=f"then_delim_{column_name}_{step_idx}_{then_idx}"
+                                        )
+                                        then_step['type'] = 'split'
+                                        then_step['params'] = {'delimiter': delimiter}
+                                        then_step['ui_type'] = 'Split'
+                                    elif then_step_type == "Extract Part":
+                                        index = st.number_input(
+                                            "Index (0-based)",
+                                            min_value=0,
+                                            value=then_step.get('params', {}).get('index', 0),
+                                            key=f"then_idx_{column_name}_{step_idx}_{then_idx}"
+                                        )
+                                        then_step['type'] = 'extract_index'
+                                        then_step['params'] = {'index': index}
+                                        then_step['ui_type'] = 'Extract Part'
+                                    elif then_step_type == "Remove Prefix":
+                                        prefix = st.text_input(
+                                            "Prefix to remove",
+                                            value=then_step.get('params', {}).get('prefix', ''),
+                                            key=f"then_prefix_{column_name}_{step_idx}_{then_idx}"
+                                        )
+                                        then_step['type'] = 'remove_prefix'
+                                        then_step['params'] = {'prefix': prefix}
+                                        then_step['ui_type'] = 'Remove Prefix'
+                                    elif then_step_type == "Trim (All Spaces)":
+                                        then_step['type'] = 'trim_all'
+                                        then_step['params'] = {}
+                                        then_step['ui_type'] = 'Trim (All Spaces)'
+                                    elif then_step_type == "Trim (Ends Only)":
+                                        then_step['type'] = 'trim_ends'
+                                        then_step['params'] = {}
+                                        then_step['ui_type'] = 'Trim (Ends Only)'
+
+                                    # Show preview after this THEN step
+                                    st.write("**Result:**")
+                                    try:
+                                        # Find a matching sample
+                                        condition = step.get('condition', {})
+                                        check_value = condition.get('value', '')
+                                        matching_sample = None
+
+                                        for val in sample_data:
+                                            val_str = str(val)
+                                            matched = False
+
+                                            if condition.get('type') == 'contains':
+                                                matched = check_value in val_str
+                                            elif condition.get('type') == 'starts_with':
+                                                matched = val_str.startswith(check_value)
+                                            elif condition.get('type') == 'ends_with':
+                                                matched = val_str.endswith(check_value)
+                                            elif condition.get('type') == 'equals':
+                                                matched = val_str == check_value
+
+                                            if matched:
+                                                matching_sample = val
+                                                break
+
+                                        if matching_sample:
+                                            # Apply all THEN steps up to this one
+                                            result = matching_sample
+                                            for i in range(then_idx + 1):
+                                                result = preview_transformation_step(result, then_steps[i])
+
+                                            if isinstance(result, list):
+                                                st.info(f"📋 Split into {len(result)} parts: `{result}`")
+                                            else:
+                                                st.success(f"✓ `{result}`")
+                                        else:
+                                            st.caption("(No matching samples)")
+                                    except Exception as e:
+                                        st.error(f"Error: {str(e)}")
+
+                            if st.button("➕ Add THEN step", key=f"add_then_{column_name}_{step_idx}"):
+                                then_steps.append({'type': 'split', 'params': {'delimiter': '  '}, 'ui_type': 'Split'})
+                                st.rerun()
+
+                            # ELSE toggle and steps
+                            st.divider()
+
+                            if 'else_steps' not in step:
+                                step['else_steps'] = []
+
+                            use_else = st.checkbox(
+                                "Add ELSE branch (for non-matching rows)",
+                                value=len(step['else_steps']) > 0,
+                                key=f"use_else_{column_name}_{step_idx}"
+                            )
+
+                            if use_else:
+                                st.write("**ELSE** (for non-matching rows):")
+
+                                for else_idx, else_step in enumerate(step['else_steps']):
+                                    with st.container(border=True):
+                                        else_col1, else_col2 = st.columns([5, 1])
+                                        with else_col1:
+                                            st.caption(f"**Step {else_idx + 1}**")
+                                        with else_col2:
+                                            if st.button("×", key=f"del_else_{column_name}_{step_idx}_{else_idx}"):
+                                                step['else_steps'].pop(else_idx)
+                                                st.rerun()
+
+                                        # Edit the step inline
+                                        else_step_type = st.selectbox(
+                                            "Operation",
+                                            options=["Split", "Extract Part", "Remove Prefix", "Trim (All Spaces)", "Trim (Ends Only)"],
+                                            key=f"else_type_{column_name}_{step_idx}_{else_idx}",
+                                            index=["Split", "Extract Part", "Remove Prefix", "Trim (All Spaces)", "Trim (Ends Only)"].index(else_step.get('ui_type', 'Split')) if else_step.get('ui_type') in ["Split", "Extract Part", "Remove Prefix", "Trim (All Spaces)", "Trim (Ends Only)"] else 0
+                                        )
+
+                                        # Configure based on type
+                                        if else_step_type == "Split":
+                                            delimiter = st.text_input(
+                                                "Delimiter",
+                                                value=else_step.get('params', {}).get('delimiter', '_'),
+                                                key=f"else_delim_{column_name}_{step_idx}_{else_idx}"
+                                            )
+                                            else_step['type'] = 'split'
+                                            else_step['params'] = {'delimiter': delimiter}
+                                            else_step['ui_type'] = 'Split'
+                                        elif else_step_type == "Extract Part":
+                                            index = st.number_input(
+                                                "Index (0-based)",
+                                                min_value=0,
+                                                value=else_step.get('params', {}).get('index', 0),
+                                                key=f"else_idx_{column_name}_{step_idx}_{else_idx}"
+                                            )
+                                            else_step['type'] = 'extract_index'
+                                            else_step['params'] = {'index': index}
+                                            else_step['ui_type'] = 'Extract Part'
+                                        elif else_step_type == "Remove Prefix":
+                                            prefix = st.text_input(
+                                                "Prefix to remove",
+                                                value=else_step.get('params', {}).get('prefix', ''),
+                                                key=f"else_prefix_{column_name}_{step_idx}_{else_idx}"
+                                            )
+                                            else_step['type'] = 'remove_prefix'
+                                            else_step['params'] = {'prefix': prefix}
+                                            else_step['ui_type'] = 'Remove Prefix'
+                                        elif else_step_type == "Trim (All Spaces)":
+                                            else_step['type'] = 'trim_all'
+                                            else_step['params'] = {}
+                                            else_step['ui_type'] = 'Trim (All Spaces)'
+                                        elif else_step_type == "Trim (Ends Only)":
+                                            else_step['type'] = 'trim_ends'
+                                            else_step['params'] = {}
+                                            else_step['ui_type'] = 'Trim (Ends Only)'
+
+                                        # Show preview after this ELSE step
+                                        st.write("**Result:**")
+                                        try:
+                                            # Find a non-matching sample
+                                            condition = step.get('condition', {})
+                                            check_value = condition.get('value', '')
+                                            non_matching_sample = None
+
+                                            for val in sample_data:
+                                                val_str = str(val)
+                                                matched = False
+
+                                                if condition.get('type') == 'contains':
+                                                    matched = check_value in val_str
+                                                elif condition.get('type') == 'starts_with':
+                                                    matched = val_str.startswith(check_value)
+                                                elif condition.get('type') == 'ends_with':
+                                                    matched = val_str.endswith(check_value)
+                                                elif condition.get('type') == 'equals':
+                                                    matched = val_str == check_value
+
+                                                if not matched:
+                                                    non_matching_sample = val
+                                                    break
+
+                                            if non_matching_sample:
+                                                # Apply all ELSE steps up to this one
+                                                result = non_matching_sample
+                                                for i in range(else_idx + 1):
+                                                    result = preview_transformation_step(result, step['else_steps'][i])
+
+                                                if isinstance(result, list):
+                                                    st.info(f"📋 Split into {len(result)} parts: `{result}`")
+                                                else:
+                                                    st.success(f"✓ `{result}`")
+                                            else:
+                                                st.caption("(No non-matching samples)")
+                                        except Exception as e:
+                                            st.error(f"Error: {str(e)}")
+
+                                if st.button("➕ Add ELSE step", key=f"add_else_{column_name}_{step_idx}"):
+                                    step['else_steps'].append({'type': 'split', 'params': {'delimiter': '_'}, 'ui_type': 'Split'})
+                                    st.rerun()
+                            elif step['else_steps']:
+                                # User unchecked the box, clear else steps
+                                step['else_steps'] = []
+
+                    # Show preview after this step
+                    st.write("**Result after this step:**")
+                    try:
+                        # For conditional steps, show different previews for matching and non-matching
+                        if step.get('type') == 'conditional':
+                            # Show preview for matching rows
+                            matching_preview = []
+                            non_matching_preview = []
+
+                            for val in sample_data[:preview_count]:
+                                val_str = str(val)
+                                matched = False
+
+                                condition = step.get('condition', {})
+                                check_value = condition.get('value', '')
+
+                                if condition.get('type') == 'contains':
+                                    matched = check_value in val_str
+                                elif condition.get('type') == 'starts_with':
+                                    matched = val_str.startswith(check_value)
+                                elif condition.get('type') == 'ends_with':
+                                    matched = val_str.endswith(check_value)
+                                elif condition.get('type') == 'equals':
+                                    matched = val_str == check_value
+                                elif condition.get('type') == 'regex_match':
+                                    import re
+                                    matched = bool(re.search(check_value, val_str))
+
+                                # Apply previous steps first
+                                preview_value = val
+                                for i in range(step_idx):
+                                    preview_value = preview_transformation_step(preview_value, steps[i])
+
+                                # Now apply this conditional step
+                                result = preview_transformation_step(preview_value, step)
+
+                                if matched:
+                                    matching_preview.append((val, result))
+                                else:
+                                    non_matching_preview.append((val, result))
+
+                            if matching_preview:
+                                st.success("✓ **Matching rows** (THEN branch):")
+                                for orig, result in matching_preview[:2]:
+                                    if isinstance(result, list):
+                                        st.caption(f"  `{str(orig)[:40]}...` → Split into {len(result)} parts: `{result}`")
+                                    else:
+                                        st.caption(f"  `{str(orig)[:40]}...` → `{result}`")
+
+                            if non_matching_preview and step.get('else_steps'):
+                                st.warning("✗ **Non-matching rows** (ELSE branch):")
+                                for orig, result in non_matching_preview[:2]:
+                                    if isinstance(result, list):
+                                        st.caption(f"  `{str(orig)[:40]}...` → Split into {len(result)} parts: `{result}`")
+                                    else:
+                                        st.caption(f"  `{str(orig)[:40]}...` → `{result}`")
+                        else:
+                            # Regular step preview
+                            preview_value = sample_data[0]
+                            for i in range(step_idx + 1):
+                                preview_value = preview_transformation_step(preview_value, steps[i])
+
+                            if isinstance(preview_value, list):
+                                st.info(f"📋 Split into **{len(preview_value)} parts**: {preview_value}")
+                            else:
+                                st.success(f"✓ `{preview_value}`")
+                    except Exception as e:
+                        st.error(f"Error: {str(e)}")
+
+        # Button to add new step
+        if st.button("➕ Add Step", key=f"modal_add_step_{column_name}", use_container_width=True):
+            steps.append({'type': 'split', 'params': {'delimiter': '  '}, 'ui_type': 'Split'})
+            st.rerun()
+
+        # Show final result for all samples
+        if steps:
+            st.divider()
+            st.write("### Final Result Preview")
+            transformation_config = {'type': 'chain', 'steps': steps}
+
+            try:
+                import pandas as pd
+                sample_series = pd.Series(sample_data[:preview_count])
+                transformed = apply_transformation(sample_series, transformation_config)
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.caption("**Before:**")
+                    for i, val in enumerate(sample_series.values):
+                        st.caption(f"  {i+1}. `{val}`")
+                with col2:
+                    st.caption("**After:**")
+                    for i, val in enumerate(transformed.values):
+                        # Handle lists specially
+                        if isinstance(val, list):
+                            st.caption(f"  {i+1}. Split into {len(val)} parts:")
+                            for idx, part in enumerate(val):
+                                st.caption(f"      [{idx}] `{part}`")
+                        else:
+                            st.caption(f"  {i+1}. `{val}`")
+            except Exception as e:
+                st.error(f"Transformation error: {str(e)}")
+
+    # Save button
+    st.divider()
+    col1, col2 = st.columns(2)
+
+    with col1:
+        if st.button("✅ Apply Transformation", type="primary", use_container_width=True):
+            # Store the transformation config in session state
+            st.session_state[f"transform_config_{column_name}"] = transformation_config
+            st.session_state[f"transform_applied_{column_name}"] = True
+            st.session_state[f"modal_open_{column_name}"] = False
+            st.rerun()
+
+    with col2:
+        if st.button("Cancel", use_container_width=True):
+            st.session_state[f"transform_applied_{column_name}"] = False
+            st.session_state[f"modal_open_{column_name}"] = False
+            st.rerun()
+
+
+# Page configuration
+st.set_page_config(
+    page_title="Data Template Manager",
+    page_icon="📊",
+    layout="wide"
+)
+
+# Custom CSS for better styling
+st.markdown("""
+<style>
+    /* Make the mapping section more distinct */
+    .stSelectbox label {
+        font-weight: 600 !important;
+        font-size: 14px !important;
+    }
+
+    /* Better section separation */
+    hr {
+        margin: 1.5rem 0 !important;
+        border-color: #e0e0e0 !important;
+    }
+
+    /* Compact column info table */
+    .dataframe {
+        font-size: 12px !important;
+    }
+
+    /* Red asterisk for required fields */
+    .stSelectbox label {
+        position: relative;
+    }
+
+    /* Make asterisks red */
+    .stSelectbox label:after {
+        content: '';
+    }
+
+    /* Target labels ending with asterisk and make them red */
+    [data-testid="stSelectbox"] label span {
+        color: inherit;
+    }
+
+    /* Style Custom option in dropdowns */
+    [data-baseweb="select"] [role="option"]:first-child {
+        color: #1f77b4 !important;
+        font-style: italic !important;
+        font-weight: 500 !important;
+    }
+
+    /* Highlight category prefixes in optional column dropdowns */
+    [data-baseweb="select"] [role="option"] {
+        font-family: 'SF Mono', Monaco, 'Courier New', monospace !important;
+        font-size: 13px !important;
+    }
+
+    /* Style radio buttons to look more like tabs - only for the main navigation */
+    .tab-navigation div[role="radiogroup"] {
+        gap: 0.5rem;
+        background-color: #f0f2f6;
+        padding: 0.25rem;
+        border-radius: 0.5rem;
+    }
+
+    .tab-navigation div[role="radiogroup"] label {
+        background-color: transparent;
+        padding: 0.5rem 1.5rem;
+        border-radius: 0.375rem;
+        cursor: pointer;
+        transition: background-color 0.2s;
+    }
+
+    .tab-navigation div[role="radiogroup"] label:hover {
+        background-color: rgba(255, 255, 255, 0.5);
+    }
+
+    .tab-navigation div[role="radiogroup"] label[data-baseweb="radio"] > div:first-child {
+        display: none;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# Required columns for viewership data
+REQUIRED_COLUMNS = [
+    "Partner",
+    "Date",
+    "Content Name",
+    "Content ID",
+    "Series",
+    "Channel",
+    "Territory",
+    "Total Watch Time"
+]
+
+# Available optional columns organized by category
+AVAILABLE_OPTIONAL_COLUMNS = {
+    "Metrics": [
+        "AVG_DURATION_PER_SESSION",
+        "AVG_DURATION_PER_VIEWER",
+        "AVG_SESSION_COUNT",
+        "CHANNEL_ADPOOL_IMPRESSIONS",
+        "DURATION",
+        "IMPRESSIONS",
+        "TOT_SESSIONS",
+        "UNIQUE_VIEWERS",
+        "VIEWS"
+    ],
+    "Geo": [
+        "CITY",
+        "COUNTRY"
+    ],
+    "Device": [
+        "DEVICE_ID",
+        "DEVICE_NAME",
+        "DEVICE_TYPE"
+    ],
+    "Content": [
+        "EPISODE_NUMBER",
+        "LANGUAGE",
+        "CONTENT_PROVIDER",
+        "REF_ID",
+        "SEASON_NUMBER",
+        "SERIES_CODE",
+        "VIEWERSHIP_TYPE"
+    ],
+    "Date": [
+        "END_TIME",
+        "MONTH",
+        "QUARTER",
+        "START_TIME",
+        "YEAR_MONTH_DAY",
+        "YEAR"
+    ],
+    "Monetary": [
+        "CHANNEL_ADPOOL_REVENUE",
+        "REVENUE"
+    ]
+}
+
+# Flatten the optional columns with section headers for dropdown
+OPTIONAL_COLUMNS_LIST = []
+SECTION_HEADERS = []  # Track section headers to exclude from selection
+for category, columns in AVAILABLE_OPTIONAL_COLUMNS.items():
+    # Add section header with gray line separator
+    header = f"──── {category} ────"
+    OPTIONAL_COLUMNS_LIST.append(header)
+    SECTION_HEADERS.append(header)
+    # Add columns without prefix
+    for col in columns:
+        OPTIONAL_COLUMNS_LIST.append(col)
+
+# Default optional columns to add on first load
+DEFAULT_OPTIONAL_COLUMNS = []
+
+def init_session_state():
+    """Initialize session state variables"""
+    if 'uploaded_file' not in st.session_state:
+        st.session_state.uploaded_file = None
+    if 'df_preview' not in st.session_state:
+        st.session_state.df_preview = None
+    if 'column_mappings' not in st.session_state:
+        st.session_state.column_mappings = {}
+    if 'existing_config' not in st.session_state:
+        st.session_state.existing_config = None
+    if 'edit_mode' not in st.session_state:
+        st.session_state.edit_mode = False
+    if 'config_id' not in st.session_state:
+        st.session_state.config_id = None
+    if 'optional_columns' not in st.session_state:
+        st.session_state.optional_columns = []
+    if 'active_tab' not in st.session_state:
+        st.session_state.active_tab = 0
+
+@st.cache_resource
+def get_snowflake_connection():
+    """
+    Get or create a cached Snowflake connection.
+    This connection is reused across all reruns and users to avoid re-authentication.
+
+    The @st.cache_resource decorator ensures this function only runs once per app session,
+    so we don't repeatedly authenticate to Snowflake.
+    """
+    try:
+        conn = SnowflakeConnection()
+        print(f"[Snowflake] New connection established for user: {st.secrets['snowflake']['user']}")
+        return conn
+    except Exception as e:
+        st.error(f"Failed to connect to Snowflake: {str(e)}")
+        st.info("Please configure your Snowflake credentials in the .streamlit/secrets.toml file")
+        return None
+
+@st.cache_data(ttl=300)  # Cache for 5 minutes
+def get_cached_platforms(_sf_conn):
+    """Get platforms from Snowflake with caching"""
+    return _sf_conn.get_platforms()
+
+@st.cache_data(ttl=300)  # Cache for 5 minutes
+def get_cached_channels(_sf_conn):
+    """Get channels from Snowflake with caching"""
+    return _sf_conn.get_channels()
+
+@st.cache_data(ttl=300)  # Cache for 5 minutes
+def get_cached_territories(_sf_conn):
+    """Get territories from Snowflake with caching"""
+    return _sf_conn.get_territories()
+
+def validate_connection(sf_conn):
+    """
+    Validate that the Snowflake connection is still alive.
+    If connection is dead, clear the cache to force reconnection on next call.
+
+    Args:
+        sf_conn: The cached Snowflake connection
+
+    Returns:
+        True if connection is valid, False if it needs to be recreated
+    """
+    if sf_conn is None:
+        return False
+
+    if not sf_conn.is_connected():
+        print("[Snowflake] Connection is dead, clearing cache to force reconnection")
+        st.cache_resource.clear()
+        return False
+
+    return True
+
+def main():
+    """Main application"""
+    init_session_state()
+
+    # Display environment badge
+    env_name = get_environment_name()
+    env_colors = {
+        'development': '🟢',
+        'staging': '🟡',
+        'production': '🔴'
+    }
+    env_badge = env_colors.get(env_name, '⚪')
+
+    col1, col2 = st.columns([5, 1])
+    with col1:
+        st.title("📊 Data Template Manager")
+        st.markdown("Manage data templates and column mappings for viewership data uploads")
+    with col2:
+        st.markdown(f"### {env_badge} {env_name.upper()}")
+        st.caption("Environment")
+
+    # Get cached Snowflake connection (only authenticates once per session)
+    sf_conn = get_snowflake_connection()
+
+    # Validate the connection is still alive
+    if not validate_connection(sf_conn):
+        # If connection is dead, try to get a new one
+        sf_conn = get_snowflake_connection()
+        if sf_conn is None:
+            st.error("Unable to establish Snowflake connection. Please check your configuration.")
+            return
+
+    # Tabs for different functionalities with session state
+    # Use radio buttons styled as tabs to preserve state across reruns
+    tab_names = ["📤 Upload & Map", "🔍 Search & Edit", "📥 Load Data"]
+
+    # Create a callback to update active tab
+    def set_active_tab():
+        st.session_state.active_tab = tab_names.index(st.session_state.selected_tab)
+
+    # Wrap navigation in a container to apply specific styling
+    st.markdown('<div class="tab-navigation">', unsafe_allow_html=True)
+    selected = st.radio(
+        "Navigation",
+        tab_names,
+        index=st.session_state.active_tab,
+        horizontal=True,
+        key="selected_tab",
+        on_change=set_active_tab,
+        label_visibility="collapsed"
+    )
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # Display the active tab content
+    if st.session_state.active_tab == 0:
+        upload_and_map_tab(sf_conn)
+    elif st.session_state.active_tab == 1:
+        search_and_edit_tab(sf_conn)
+    elif st.session_state.active_tab == 2:
+        load_data_tab(sf_conn)
+
+def upload_and_map_tab(sf_conn):
+    """Tab for uploading files and creating/editing mappings"""
+
+    # Initialize variables
+    df = None
+    platform = ""
+    partner = ""
+    filename = ""
+
+    # Only show upload section if no file is uploaded yet
+    if 'df' not in st.session_state or st.session_state.get('df') is None:
+        st.header("Upload File and Create Mapping")
+
+        # Configuration details BEFORE file upload
+        st.subheader("Configuration Details")
+
+        # Fetch platforms from Snowflake (cached)
+        platforms = get_cached_platforms(sf_conn)
+        if platforms:
+            platform = st.selectbox(
+                "Platform *",
+                options=[""] + platforms,
+                help="Required. Select a platform from the list"
+            )
+        else:
+            # Fallback to text input if query fails
+            platform = st.text_input("Platform *", help="Required. e.g., YouTube, Netflix, Amazon Prime")
+
+        partner = st.text_input("Partner (optional)", help="Leave blank for a platform-wide template, or specify partner for specific mapping")
+
+        # Channel dropdown (optional)
+        channels = get_cached_channels(sf_conn)
+        if channels:
+            channel = st.selectbox(
+                "Channel (optional)",
+                options=[""] + channels,
+                help="Optional. Select a channel from the list"
+            )
+        else:
+            channel = ""
+
+        # Territory dropdown (optional)
+        territories = get_cached_territories(sf_conn)
+        if territories:
+            territory = st.selectbox(
+                "Territory (optional)",
+                options=[""] + territories,
+                help="Optional. Select a territory from the list"
+            )
+        else:
+            territory = ""
+
+        # Additional metadata fields
+        domain = st.selectbox(
+            "Domain",
+            options=["", "Distribution Partners", "Owned and Operated"],
+            help="Select domain type"
+        )
+
+        # Data Type selector - determines which columns are required
+        # Map user-friendly labels to backend values
+        data_type_labels = {
+            "Hours/Mins by Episode": "Viewership",
+            "Revenue by Episode": "Revenue"
+        }
+
+        data_type_display = st.selectbox(
+            "Data Type *",
+            options=["", "Hours/Mins by Episode", "Revenue by Episode"],
+            help="Required. Select the type of data in this template. This determines which metrics columns are required."
+        )
+
+        # Convert display label to backend value
+        data_type = data_type_labels.get(data_type_display, data_type_display) if data_type_display else ""
+
+        # File uploader - disabled if no platform or data type
+        if not platform or not data_type:
+            st.info("⚠️ Please enter Platform name and Data Type before uploading a file")
+        else:
+            uploaded_file = st.file_uploader(
+                "Upload a sample data file",
+                type=['csv', 'xlsx', 'xls'],
+                help="Upload a sample file to create column mappings"
+            )
+
+            # Read and store the dataframe in session state
+            if uploaded_file is not None:
+                try:
+                    if uploaded_file.name.endswith('.csv'):
+                        df = pd.read_csv(uploaded_file)
+                    else:
+                        df = pd.read_excel(uploaded_file)
+
+                    st.session_state.df = df
+                    st.session_state.filename = uploaded_file.name
+                    st.session_state.platform = platform
+                    st.session_state.partner = partner
+                    st.session_state.channel = channel
+                    st.session_state.territory = territory
+                    st.session_state.domain = domain
+                    st.session_state.data_type = data_type
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error reading file: {str(e)}")
+    else:
+        # File already uploaded, retrieve from session state
+        df = st.session_state.df
+        filename = st.session_state.get('filename', 'uploaded file')
+        platform = st.session_state.get('platform', '')
+        partner = st.session_state.get('partner', '')
+        channel = st.session_state.get('channel', '')
+        territory = st.session_state.get('territory', '')
+        domain = st.session_state.get('domain', '')
+        data_type = st.session_state.get('data_type', '')
+
+    if df is not None:
+        # Process the dataframe
+        try:
+
+            # Check for existing configuration - show at top if exists
+            if platform:
+                # Use "DEFAULT" as sentinel value for blank partner
+                partner_value = partner if partner.strip() else "DEFAULT"
+                existing_config = sf_conn.get_config_by_platform_partner(platform, partner_value)
+                if existing_config:
+                    partner_display = partner if partner.strip() else "(platform-wide)"
+                    col_warn, col_load = st.columns([3, 1])
+                    with col_warn:
+                        st.warning(f"⚠️ Configuration exists for {platform} - {partner_display}. Load it or create new.", icon="⚠️")
+                    with col_load:
+                        if st.button("Load Existing", use_container_width=True):
+                            st.session_state.existing_config = existing_config
+                            st.session_state.edit_mode = True
+                            st.session_state.config_id = existing_config['CONFIG_ID']
+
+                            # Load sample data back into dataframe
+                            if existing_config.get('SAMPLE_DATA'):
+                                sample_df = pd.DataFrame(existing_config['SAMPLE_DATA'])
+                                st.session_state.df = sample_df
+                                st.session_state.filename = f"[Loaded from config] {platform} - {partner_display}"
+
+                            # Load metadata into session state
+                            st.session_state.channel = existing_config.get('CHANNEL', '')
+                            st.session_state.territory = existing_config.get('TERRITORY', '')
+                            st.session_state.domain = existing_config.get('DOMAIN', '')
+                            st.session_state.data_type = existing_config.get('DATA_TYPE', '')
+
+                            st.rerun()
+
+            # New section header after upload with "Upload New File" button
+            col_header, col_new = st.columns([4, 1])
+            with col_header:
+                st.header("📊 Map Columns")
+                # Show user-friendly data type label
+                data_type_reverse_map = {
+                    "Viewership": "Hours/Mins by Episode",
+                    "Revenue": "Revenue by Episode"
+                }
+                data_type_display_header = data_type_reverse_map.get(data_type, data_type) if data_type else '(not set)'
+                st.markdown(f"**File:** {filename} • **Platform:** {platform} • **Partner:** {partner if partner else '(platform-wide)'} • **Type:** {data_type_display_header}")
+            with col_new:
+                if st.button("🔄 Upload New File", use_container_width=True):
+                    st.session_state.df = None
+                    st.session_state.filename = None
+                    st.session_state.platform = None
+                    st.session_state.partner = None
+                    st.session_state.channel = None
+                    st.session_state.territory = None
+                    st.session_state.domain = None
+                    st.session_state.data_type = None
+                    st.session_state.edit_mode = False
+                    st.session_state.config_id = None
+                    st.session_state.existing_config = None
+                    st.session_state.optional_columns = []
+                    st.rerun()
+
+            # Show editable metadata fields when file is uploaded
+            st.subheader("Configuration Metadata")
+            col_meta1, col_meta2 = st.columns(2)
+
+            with col_meta1:
+                # Channel dropdown
+                channels = get_cached_channels(sf_conn)
+                if channels:
+                    channel_idx = 0
+                    if channel and channel in channels:
+                        channel_idx = channels.index(channel) + 1  # +1 for empty option
+                    channel = st.selectbox(
+                        "Channel (optional)",
+                        options=[""] + channels,
+                        index=channel_idx,
+                        help="Optional. Select a channel from the list",
+                        key="edit_channel"
+                    )
+                    # Update session state
+                    st.session_state.channel = channel
+
+            with col_meta2:
+                # Territory dropdown
+                territories = get_cached_territories(sf_conn)
+                if territories:
+                    territory_idx = 0
+                    if territory and territory in territories:
+                        territory_idx = territories.index(territory) + 1  # +1 for empty option
+                    territory = st.selectbox(
+                        "Territory (optional)",
+                        options=[""] + territories,
+                        index=territory_idx,
+                        help="Optional. Select a territory from the list",
+                        key="edit_territory"
+                    )
+                    # Update session state
+                    st.session_state.territory = territory
+
+            # Domain field (full width)
+            domain_options = ["", "Distribution Partners", "Owned and Operated"]
+            domain_idx = 0
+            if domain and domain in domain_options:
+                domain_idx = domain_options.index(domain)
+            domain = st.selectbox(
+                "Domain",
+                options=domain_options,
+                index=domain_idx,
+                help="Select domain type",
+                key="edit_domain"
+            )
+            # Update session state
+            st.session_state.domain = domain
+
+            # Data Type field (full width) - editable
+            # Reverse map backend values to display labels
+            data_type_reverse_map = {
+                "Viewership": "Hours/Mins by Episode",
+                "Revenue": "Revenue by Episode"
+            }
+            data_type_display_value = data_type_reverse_map.get(data_type, data_type) if data_type else ""
+
+            data_type_display_options = ["", "Hours/Mins by Episode", "Revenue by Episode"]
+            data_type_display_idx = 0
+            if data_type_display_value and data_type_display_value in data_type_display_options:
+                data_type_display_idx = data_type_display_options.index(data_type_display_value)
+
+            data_type_display_edit = st.selectbox(
+                "Data Type *",
+                options=data_type_display_options,
+                index=data_type_display_idx,
+                help="Select the type of data in this template",
+                key="edit_data_type"
+            )
+
+            # Map display label back to backend value
+            data_type_labels = {
+                "Hours/Mins by Episode": "Viewership",
+                "Revenue by Episode": "Revenue"
+            }
+            data_type = data_type_labels.get(data_type_display_edit, data_type_display_edit) if data_type_display_edit else ""
+            # Update session state
+            st.session_state.data_type = data_type
+
+            st.divider()
+
+            # Two-column layout: Left = Data Preview, Right = Column Mapping
+            left_col, right_col = st.columns([1, 1])
+
+            # LEFT COLUMN: Data Preview and Column Information (Scrollable)
+            with left_col:
+                with st.container(height=800):
+                    st.subheader("📋 Data Preview")
+                    st.dataframe(df.head(50), use_container_width=True)
+
+                    st.subheader("📊 Column Information")
+                    col_info = []
+                    for col in df.columns:
+                        sample_values = df[col].dropna().head(3).tolist()
+                        col_info.append({
+                            "Column Name": col,
+                            "Type": str(df[col].dtype),
+                            "Non-Null": df[col].notna().sum(),
+                            "Sample Values": ", ".join([str(v)[:30] for v in sample_values])
+                        })
+
+                    st.dataframe(pd.DataFrame(col_info), use_container_width=True)
+
+            # RIGHT COLUMN: Column Mapping
+            with right_col:
+                st.subheader("🔗 Column Mapping")
+                st.markdown("*Fields marked with <span style='color:red;'>*</span> are required*", unsafe_allow_html=True)
+
+                mapper = ColumnMapper(df.columns.tolist(), REQUIRED_COLUMNS)
+
+                # Load existing mappings if in edit mode
+                if st.session_state.edit_mode and st.session_state.existing_config:
+                    auto_mappings = st.session_state.existing_config['COLUMN_MAPPINGS']
+                    # Separate required from optional columns
+                    st.session_state.optional_columns = [
+                        col for col in auto_mappings.keys()
+                        if col not in REQUIRED_COLUMNS
+                    ]
+                else:
+                    auto_mappings = mapper.suggest_mappings()
+
+                # Optional columns start empty - user can add them manually
+
+                # Add Channel and Territory mappings to auto_mappings for intelligent suggestions
+                all_columns_to_map = REQUIRED_COLUMNS + st.session_state.optional_columns
+                mapper_all = ColumnMapper(df.columns.tolist(), all_columns_to_map)
+                auto_mappings_all = mapper_all.suggest_mappings()
+
+                final_mappings = {}
+
+                # REQUIRED COLUMNS (with red asterisks)
+                for required_col in REQUIRED_COLUMNS:
+                    suggested = auto_mappings_all.get(required_col, "")
+
+                    # Create dropdown with Custom first, then columns, then ❌ Not Mapped
+                    options = ["✏️ Custom (enter manually)"] + df.columns.tolist() + ["❌ Not Mapped"]
+                    default_idx = 0
+                    if suggested and suggested in df.columns.tolist():
+                        default_idx = options.index(suggested)
+
+                    # Show label with red asterisk using markdown
+                    st.markdown(f"**{required_col}** <span style='color: red; font-weight: bold;'>*</span>", unsafe_allow_html=True)
+                    selected = st.selectbox(
+                        required_col,
+                        options,
+                        index=default_idx,
+                        key=f"mapping_{required_col}",
+                        help=f"Required: Map a source column to {required_col}",
+                        label_visibility="collapsed"
+                    )
+
+                    # Show transformation options if a column is selected
+                    transformation_config = None
+                    if selected != "❌ Not Mapped" and selected != "✏️ Custom (enter manually)":
+                        # Check if transformation was applied
+                        transform_key = f"transform_config_{required_col}"
+                        applied_key = f"transform_applied_{required_col}"
+
+                        # Show button to open transformation builder
+                        col_btn, col_status = st.columns([1, 2])
+                        with col_btn:
+                            if st.button("🔧 Transform", key=f"open_transform_{required_col}"):
+                                st.session_state[f"modal_open_{required_col}"] = True
+                                st.session_state[f"modal_sample_data_{required_col}"] = df[selected].head(10).tolist()
+
+                        # Keep modal open if it should be open
+                        if st.session_state.get(f"modal_open_{required_col}", False):
+                            sample_values = st.session_state.get(f"modal_sample_data_{required_col}", df[selected].head(10).tolist())
+                            transformation_builder_modal(required_col, sample_values)
+
+                        with col_status:
+                            # Show transformation status
+                            if applied_key in st.session_state and st.session_state[applied_key]:
+                                transformation_config = st.session_state.get(transform_key)
+                                if transformation_config:
+                                    st.caption("✅ Transformation applied")
+                                else:
+                                    st.caption("🔧 Click Transform to add")
+                            else:
+                                st.caption("🔧 Click Transform to add transformations")
+
+                        # Retrieve the transformation config if it was applied
+                        if applied_key in st.session_state and st.session_state[applied_key]:
+                            transformation_config = st.session_state.get(transform_key)
+
+                    # Special handling for Total Watch Time - add unit selector
+                    if required_col == "Total Watch Time" and selected != "❌ Not Mapped":
+                        if not transformation_config:  # Only show if no transformation applied
+                            st.caption("Select unit:")
+                            unit = st.radio(
+                                "Unit",
+                                options=["Hours", "Minutes"],
+                                horizontal=True,
+                                key=f"unit_{required_col}",
+                                label_visibility="collapsed"
+                            )
+
+                    # If "Custom" is selected, show text input
+                    if selected == "✏️ Custom (enter manually)":
+                        custom_value = st.text_input(
+                            f"Enter custom value for {required_col}",
+                            key=f"custom_{required_col}",
+                            placeholder="Type column name or expression",
+                            label_visibility="collapsed"
+                        )
+                        if custom_value:
+                            # For Total Watch Time, store unit in a separate key
+                            if required_col == "Total Watch Time":
+                                final_mappings[required_col] = custom_value
+                                final_mappings['_total_watch_time_unit'] = unit.lower()
+                            else:
+                                final_mappings[required_col] = custom_value
+                    elif selected != "❌ Not Mapped":
+                        # Store mapping with optional transformation
+                        mapping_value = {
+                            'source_column': selected
+                        }
+
+                        # Add transformation if configured
+                        if transformation_config:
+                            mapping_value['transformation'] = transformation_config
+
+                        # For Total Watch Time, store unit
+                        if required_col == "Total Watch Time" and not transformation_config:
+                            mapping_value['unit'] = unit.lower()
+
+                        final_mappings[required_col] = mapping_value
+
+                # OPTIONAL COLUMNS SECTION
+                st.markdown("---")
+                st.markdown("**Optional Columns**")
+                st.caption("💡 Start typing to search for a field")
+
+                # Display existing optional columns
+                for idx, opt_col in enumerate(st.session_state.optional_columns):
+                    # Get current column index in the list, or use current value
+                    current_idx = 0
+                    if opt_col in OPTIONAL_COLUMNS_LIST:
+                        current_idx = OPTIONAL_COLUMNS_LIST.index(opt_col)
+
+                    col_label, col_dropdown, col_remove = st.columns([2, 3, 1])
+
+                    with col_label:
+                        updated_label = st.selectbox(
+                            "Field Name",
+                            options=OPTIONAL_COLUMNS_LIST,
+                            index=current_idx,
+                            key=f"opt_label_{idx}",
+                            label_visibility="collapsed"
+                        )
+                        # Update the label in session state if changed
+                        if updated_label != opt_col:
+                            st.session_state.optional_columns[idx] = updated_label
+
+                    # Use updated label if changed
+                    current_label = updated_label
+
+                    with col_dropdown:
+                        # Extract base column name (remove category prefix) for mapping
+                        base_col_name = current_label.split(" - ")[-1] if " - " in current_label else current_label
+
+                        # Try to get suggestion using base name
+                        opt_suggested = auto_mappings_all.get(base_col_name, "")
+                        opt_options = ["✏️ Custom (enter manually)"] + df.columns.tolist() + ["❌ Not Mapped"]
+                        opt_default_idx = 0
+                        if opt_suggested and opt_suggested in df.columns.tolist():
+                            opt_default_idx = opt_options.index(opt_suggested)
+
+                        opt_selected = st.selectbox(
+                            "Source",
+                            opt_options,
+                            index=opt_default_idx,
+                            key=f"opt_mapping_{idx}",
+                            label_visibility="collapsed"
+                        )
+
+                        # Show transformation options for optional columns
+                        opt_transformation_config = None
+                        if opt_selected != "❌ Not Mapped" and opt_selected != "✏️ Custom (enter manually)":
+                            # Use a unique key for this optional column
+                            opt_column_key = f"opt_{idx}_{current_label}"
+                            opt_transform_key = f"transform_config_{opt_column_key}"
+                            opt_applied_key = f"transform_applied_{opt_column_key}"
+
+                            # Show button to open transformation builder
+                            col_btn2, col_status2 = st.columns([1, 2])
+                            with col_btn2:
+                                if st.button("🔧", key=f"open_transform_opt_{idx}"):
+                                    st.session_state[f"modal_open_{opt_column_key}"] = True
+                                    st.session_state[f"modal_sample_data_{opt_column_key}"] = df[opt_selected].head(10).tolist()
+
+                            # Keep modal open if it should be open
+                            if st.session_state.get(f"modal_open_{opt_column_key}", False):
+                                opt_sample_values = st.session_state.get(f"modal_sample_data_{opt_column_key}", df[opt_selected].head(10).tolist())
+                                transformation_builder_modal(opt_column_key, opt_sample_values)
+
+                            with col_status2:
+                                # Show transformation status
+                                if opt_applied_key in st.session_state and st.session_state[opt_applied_key]:
+                                    opt_transformation_config = st.session_state.get(opt_transform_key)
+                                    if opt_transformation_config:
+                                        st.caption("✅ Transformed")
+                                else:
+                                    st.caption("")  # Empty for alignment
+
+                            # Retrieve the transformation config if it was applied
+                            if opt_applied_key in st.session_state and st.session_state[opt_applied_key]:
+                                opt_transformation_config = st.session_state.get(opt_transform_key)
+
+                        # If "Custom" is selected, show text input
+                        if opt_selected == "✏️ Custom (enter manually)":
+                            opt_custom_value = st.text_input(
+                                f"Enter custom value",
+                                key=f"opt_custom_{idx}",
+                                placeholder="Type column name",
+                                label_visibility="collapsed"
+                            )
+                            if opt_custom_value:
+                                # Store with full label (including category)
+                                final_mappings[current_label] = opt_custom_value
+                        elif opt_selected != "❌ Not Mapped":
+                            # Store with full label and optional transformation
+                            mapping_value = {
+                                'source_column': opt_selected
+                            }
+                            if opt_transformation_config:
+                                mapping_value['transformation'] = opt_transformation_config
+                            final_mappings[current_label] = mapping_value
+
+                    with col_remove:
+                        if st.button("🗑️", key=f"remove_{idx}", help="Remove this column"):
+                            st.session_state.optional_columns.pop(idx)
+                            st.rerun()
+
+                # Add new optional column button
+                col_add, col_spacer = st.columns([1, 2])
+                with col_add:
+                    if st.button("➕ Add Optional Column", use_container_width=True):
+                        # Add the first available column that hasn't been added yet
+                        for col in OPTIONAL_COLUMNS_LIST:
+                            if col not in st.session_state.optional_columns:
+                                st.session_state.optional_columns.append(col)
+                                break
+                        st.rerun()
+
+            # Save configuration
+            st.subheader("Save Configuration")
+
+            if not platform:
+                st.warning("Please enter Platform to save the configuration.")
+            else:
+                col1, col2, col3 = st.columns([1, 1, 2])
+
+                with col1:
+                    if st.button("💾 Save Configuration", type="primary", use_container_width=True):
+                        try:
+                            # Use "DEFAULT" for blank partner
+                            partner_value = partner.strip() if partner.strip() else "DEFAULT"
+
+                            # Save first 100 rows as sample data
+                            sample_df = df.head(100)
+                            sample_data = sample_df.to_dict(orient='records')
+
+                            config_data = {
+                                "platform": platform,
+                                "partner": partner_value,
+                                "channel": channel if channel else None,  # NULL for platform-wide configs
+                                "territory": territory if territory else None,  # NULL for platform-wide configs
+                                "domain": domain if domain else None,
+                                "data_type": data_type if data_type else None,
+                                "column_mappings": final_mappings,
+                                "filename_pattern": None,
+                                "source_columns": df.columns.tolist(),
+                                "sample_data": sample_data,
+                                "created_date": datetime.now().isoformat()
+                            }
+
+                            if st.session_state.edit_mode and st.session_state.config_id:
+                                sf_conn.update_config(st.session_state.config_id, config_data)
+                                st.success("Configuration updated successfully!")
+
+                                # Reset session state
+                                st.session_state.edit_mode = False
+                                st.session_state.config_id = None
+                                st.session_state.existing_config = None
+                                st.session_state.optional_columns = []
+                                st.session_state.df = None
+                                st.session_state.filename = None
+                                st.session_state.platform = None
+                                st.session_state.partner = None
+                                st.session_state.channel = None
+                                st.session_state.territory = None
+                                st.session_state.domain = None
+                                st.session_state.data_type = None
+                            else:
+                                # Check if exact config already exists (matching UNIQUE constraint)
+                                existing_config = sf_conn.check_duplicate_config(
+                                    platform=platform,
+                                    partner=partner_value,
+                                    channel=channel,
+                                    territory=territory
+                                )
+
+                                if existing_config:
+                                    # Config exists - show warning
+                                    st.warning(f"⚠️ Configuration already exists for Platform: {platform}, Partner: {partner_value}, Channel: {channel or '(none)'}, Territory: {territory or '(none)'}")
+                                    st.info("Would you like to **update** the existing configuration instead?")
+
+                                    col_yes, col_no = st.columns(2)
+                                    with col_yes:
+                                        if st.button("✅ Yes, Update It", use_container_width=True):
+                                            sf_conn.update_config(existing_config['config_id'], config_data)
+                                            st.success("Configuration updated successfully!")
+
+                                            # Reset session state
+                                            st.session_state.edit_mode = False
+                                            st.session_state.config_id = None
+                                            st.session_state.existing_config = None
+                                            st.session_state.optional_columns = []
+                                            st.session_state.df = None
+                                            st.session_state.filename = None
+                                            st.session_state.platform = None
+                                            st.session_state.partner = None
+                                            st.session_state.channel = None
+                                            st.session_state.territory = None
+                                            st.session_state.domain = None
+                                            st.session_state.data_type = None
+                                            st.rerun()
+                                    with col_no:
+                                        if st.button("❌ Cancel", use_container_width=True):
+                                            st.info("Save cancelled. You can edit the existing config in the 'Search & Edit' tab.")
+                                else:
+                                    # No existing config - safe to insert
+                                    sf_conn.insert_config(config_data)
+                                    partner_display = partner if partner.strip() else "(platform-wide)"
+                                    st.success(f"Configuration saved successfully for Platform: {platform}, Partner: {partner_display}")
+
+                                    # Reset session state
+                                    st.session_state.edit_mode = False
+                                    st.session_state.config_id = None
+                                    st.session_state.existing_config = None
+                                    st.session_state.optional_columns = []
+                                    st.session_state.df = None
+                                    st.session_state.filename = None
+                                    st.session_state.platform = None
+                                    st.session_state.partner = None
+                                    st.session_state.channel = None
+                                    st.session_state.territory = None
+                                    st.session_state.domain = None
+                                    st.session_state.data_type = None
+
+                        except Exception as e:
+                            st.error(f"Error saving configuration: {str(e)}")
+
+                with col2:
+                    if st.button("🔄 Reset", use_container_width=True):
+                        st.session_state.edit_mode = False
+                        st.session_state.config_id = None
+                        st.session_state.existing_config = None
+                        st.session_state.optional_columns = []
+                        st.session_state.df = None
+                        st.session_state.filename = None
+                        st.session_state.platform = None
+                        st.session_state.partner = None
+                        st.session_state.channel = None
+                        st.session_state.territory = None
+                        st.session_state.domain = None
+                        st.session_state.data_type = None
+                        st.rerun()
+
+        except Exception as e:
+            st.error(f"Error reading file: {str(e)}")
+
+def search_and_edit_tab(sf_conn):
+    """Tab for searching and editing existing configurations"""
+    st.header("Search & Edit Configurations")
+
+    # Search options
+    search_method = st.radio(
+        "Search by:",
+        ["Platform & Partner", "View All"],
+        horizontal=True
+    )
+
+    if search_method == "Platform & Partner":
+        col1, col2, col3 = st.columns([2, 2, 1])
+
+        with col1:
+            search_platform = st.text_input("Platform")
+        with col2:
+            search_partner = st.text_input("Partner")
+        with col3:
+            st.write("")  # Spacer
+            st.write("")  # Spacer
+            search_button = st.button("🔍 Search", type="primary")
+
+        if search_button and (search_platform or search_partner):
+            configs = sf_conn.search_configs(search_platform, search_partner)
+            display_configs(configs, sf_conn)
+        elif search_button:
+            st.warning("Please enter at least one search criterion.")
+
+    else:  # View All
+        configs = sf_conn.get_all_configs()
+        display_configs(configs, sf_conn)
+
+def display_configs(configs, sf_conn):
+    """Display configurations in a table with edit/delete options"""
+    if not configs:
+        st.info("No configurations found.")
+        return
+
+    st.subheader(f"Found {len(configs)} configuration(s)")
+
+    for idx, config in enumerate(configs):
+        # Display partner as "(platform-wide)" if it's "DEFAULT"
+        partner_display = config['PARTNER'] if config['PARTNER'] != 'DEFAULT' else '(platform-wide)'
+
+        with st.expander(f"📄 {config['PLATFORM']} - {partner_display} (ID: {config['CONFIG_ID']})"):
+            col1, col2 = st.columns([3, 1])
+
+            with col1:
+                st.markdown(f"**Platform:** {config['PLATFORM']}")
+                st.markdown(f"**Partner:** {partner_display}")
+                if config.get('CHANNEL'):
+                    st.markdown(f"**Channel:** {config['CHANNEL']}")
+                if config.get('TERRITORY'):
+                    st.markdown(f"**Territory:** {config['TERRITORY']}")
+                if config.get('DOMAIN'):
+                    st.markdown(f"**Domain:** {config['DOMAIN']}")
+
+                # Show data type with user-friendly label
+                if config.get('DATA_TYPE'):
+                    data_type_reverse_map = {
+                        "Viewership": "Hours/Mins by Episode",
+                        "Revenue": "Revenue by Episode"
+                    }
+                    data_type_display = data_type_reverse_map.get(config.get('DATA_TYPE'), config.get('DATA_TYPE'))
+                    st.markdown(f"**Data Type:** {data_type_display}")
+
+                st.markdown(f"**Created:** {config['CREATED_DATE']}")
+
+                st.markdown("**Column Mappings:**")
+                mappings_df = pd.DataFrame([
+                    {"Required Field": k, "Mapped Column": v}
+                    for k, v in config['COLUMN_MAPPINGS'].items()
+                ])
+                st.dataframe(mappings_df, use_container_width=True, hide_index=True)
+
+                if config.get('SOURCE_COLUMNS'):
+                    with st.expander("View Source Columns"):
+                        st.write(config['SOURCE_COLUMNS'])
+
+            with col2:
+                st.write("")  # Spacer
+                if st.button("✏️ Edit", key=f"edit_{config['CONFIG_ID']}", use_container_width=True):
+                    st.session_state.existing_config = config
+                    st.session_state.edit_mode = True
+                    st.session_state.config_id = config['CONFIG_ID']
+
+                    # Load sample data back into dataframe for editing
+                    if config.get('SAMPLE_DATA'):
+                        sample_df = pd.DataFrame(config['SAMPLE_DATA'])
+                        st.session_state.df = sample_df
+                        partner_display = config['PARTNER'] if config['PARTNER'] != 'DEFAULT' else "(platform-wide)"
+                        st.session_state.filename = f"[Loaded from config] {config['PLATFORM']} - {partner_display}"
+                        st.session_state.platform = config['PLATFORM']
+                        st.session_state.partner = config['PARTNER'] if config['PARTNER'] != 'DEFAULT' else ""
+                        st.session_state.channel = config.get('CHANNEL', '')
+                        st.session_state.territory = config.get('TERRITORY', '')
+                        st.session_state.domain = config.get('DOMAIN', '')
+                        st.session_state.data_type = config.get('DATA_TYPE', '')
+
+                    # Switch to Upload & Map tab
+                    st.session_state.active_tab = 0
+                    st.rerun()
+
+                if st.button("🗑️ Delete", key=f"delete_{config['CONFIG_ID']}", use_container_width=True):
+                    try:
+                        sf_conn.delete_config(config['CONFIG_ID'])
+                        st.success("Configuration deleted successfully!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error deleting configuration: {str(e)}")
+
+def load_data_tab(sf_conn):
+    """Tab for loading data into platform_viewership table using existing templates"""
+
+    st.header("Load Data to Platform Viewership")
+    st.write("Select a configuration template and upload data to load into the platform_viewership table.")
+
+    # Create centered, narrower container
+    col_left, col_center, col_right = st.columns([1, 2, 1])
+
+    with col_center:
+        # Section 1: Find Configuration
+        st.subheader("1. Find Configuration Template")
+
+        # Platform at the top
+        platforms = get_cached_platforms(sf_conn)
+        if platforms:
+            platform = st.selectbox(
+                "Platform *",
+                options=[""] + platforms,
+                help="Required. Select the platform for this data"
+            )
+        else:
+            platform = st.text_input("Platform *", help="Required. Enter the platform name")
+
+        # Partner (optional)
+        partner = st.text_input("Partner (optional)", help="Optional. Enter partner name or leave blank for platform-wide template")
+
+        # Channel dropdown (optional)
+        channels = get_cached_channels(sf_conn)
+        if channels:
+            channel = st.selectbox(
+                "Channel (optional)",
+                options=[""] + channels,
+                help="Optional. Filter by channel"
+            )
+        else:
+            channel = ""
+
+        # Territory dropdown (optional)
+        territories = get_cached_territories(sf_conn)
+        if territories:
+            territory = st.selectbox(
+                "Territory (optional)",
+                options=[""] + territories,
+                help="Optional. Filter by territory"
+            )
+        else:
+            territory = ""
+
+        # Year (required)
+        year = st.selectbox(
+            "Year *",
+            options=[2025, 2026],
+            help="Required. Select the year for this data"
+        )
+
+        # Quarter (required)
+        quarter = st.selectbox(
+            "Quarter *",
+            options=["Q1", "Q2", "Q3", "Q4"],
+            help="Required. Select the quarter for this data"
+        )
+
+        # Month (optional)
+        month = st.selectbox(
+            "Month (optional)",
+            options=["", "January", "February", "March", "April", "May", "June",
+                     "July", "August", "September", "October", "November", "December"],
+            help="Optional. Select the month for this data"
+        )
+
+        # Search for configuration
+        config = None
+        if platform:
+            try:
+                # Use DEFAULT if partner is blank
+                partner_value = partner.strip() if partner.strip() else "DEFAULT"
+                config = sf_conn.get_config_by_platform_partner(platform, partner_value)
+
+                if config:
+                    st.success(f"✓ Found configuration for Platform: {platform}, Partner: {partner_value}")
+
+                    # Show config details in expander
+                    with st.expander("View Template Details", expanded=False):
+                        st.write("**Platform:**", config.get('PLATFORM'))
+                        st.write("**Partner:**", config.get('PARTNER'))
+                        if config.get('CHANNEL'):
+                            st.write("**Channel:**", config.get('CHANNEL'))
+                        if config.get('TERRITORY'):
+                            st.write("**Territory:**", config.get('TERRITORY'))
+
+                        # Show data type with user-friendly label
+                        if config.get('DATA_TYPE'):
+                            data_type_reverse_map = {
+                                "Viewership": "Hours/Mins by Episode",
+                                "Revenue": "Revenue by Episode"
+                            }
+                            data_type_display = data_type_reverse_map.get(config.get('DATA_TYPE'), config.get('DATA_TYPE'))
+                            st.write("**Data Type:**", data_type_display)
+
+                        st.write("**Created:**", config.get('CREATED_DATE'))
+                        if config.get('UPDATED_DATE'):
+                            st.write("**Updated:**", config.get('UPDATED_DATE'))
+
+                        st.write("**Column Mappings:**")
+                        st.json(config.get('COLUMN_MAPPINGS', {}))
+                else:
+                    st.warning(f"No configuration found for Platform: {platform}, Partner: {partner_value}")
+                    st.info("Please create a template first in the 'Upload & Map' tab.")
+            except Exception as e:
+                st.error(f"Error searching for configuration: {str(e)}")
+
+        # Section 2: Upload and Load Data
+        if config:
+            # Get metadata from config
+            domain = config.get('DOMAIN', '')
+            data_type = config.get('DATA_TYPE', '')
+
+            # User email for notifications - remember in session state
+            if 'user_email' not in st.session_state:
+                st.session_state.user_email = 'tayloryoung@mvmediasales.com'  # Default email
+
+            user_email = st.text_input(
+                "Your Email (for notifications)",
+                value=st.session_state.user_email,
+                help="Enter your email address for notifications",
+                key="notification_email"
+            )
+            # Update session state when changed
+            st.session_state.user_email = user_email
+
+            st.subheader("2. Upload Data Files")
+
+            uploaded_files = st.file_uploader(
+                "Upload data file(s) to load",
+                type=['csv', 'xlsx', 'xls'],
+                help="Upload one or more files matching the template format",
+                key="load_data_uploader",
+                accept_multiple_files=True
+            )
+
+            if uploaded_files:
+                st.write(f"**Files Selected:** {len(uploaded_files)}")
+
+                # Show summary of all files
+                total_rows = 0
+                file_info = []
+
+                for uploaded_file in uploaded_files:
+                    try:
+                        # Read the file
+                        if uploaded_file.name.endswith('.csv'):
+                            df = pd.read_csv(uploaded_file)
+                        else:
+                            df = pd.read_excel(uploaded_file)
+
+                        file_info.append({
+                            'name': uploaded_file.name,
+                            'rows': len(df),
+                            'columns': len(df.columns),
+                            'df': df
+                        })
+                        total_rows += len(df)
+                    except Exception as e:
+                        st.error(f"Error reading {uploaded_file.name}: {str(e)}")
+
+                if file_info:
+                    # Show file summary
+                    st.write(f"**Total Rows Across All Files:** {total_rows:,}")
+
+                    with st.expander("View File Details", expanded=False):
+                        for info in file_info:
+                            st.write(f"**{info['name']}** - {info['rows']:,} rows, {info['columns']} columns")
+
+                    # Preview first file - show transformed data
+                    with st.expander(f"Preview Transformed Data from {file_info[0]['name']}", expanded=True):
+                        try:
+                            # Apply transformations to preview
+                            column_mappings = config.get('COLUMN_MAPPINGS', {})
+                            preview_df = apply_column_mappings(
+                                file_info[0]['df'].head(50),
+                                column_mappings,
+                                platform,
+                                channel,
+                                territory,
+                                domain,
+                                file_info[0]['name'],
+                                year,
+                                quarter,
+                                month
+                            )
+
+                            st.caption("📊 This shows what will be loaded to Snowflake (after transformations)")
+                            st.dataframe(preview_df.head(10), use_container_width=True)
+
+                            # Show summary
+                            st.caption(f"**Preview:** First 10 of {len(preview_df):,} rows that will be loaded")
+                        except Exception as e:
+                            st.warning(f"Could not generate transformed preview: {str(e)}")
+                            st.caption("Showing raw data instead:")
+                            st.dataframe(file_info[0]['df'].head(10), use_container_width=True)
+
+                    # Apply mappings and load
+                    st.subheader("3. Load Data")
+
+                    if st.button("🚀 Load All Files to Platform Viewership", type="primary", use_container_width=True):
+                        try:
+                            # Get column mappings
+                            column_mappings = config.get('COLUMN_MAPPINGS', {})
+
+                            # Process each file
+                            total_loaded = 0
+                            total_hov = 0.0
+                            all_transformed_dfs = []
+                            progress_bar = st.progress(0)
+                            status_text = st.empty()
+                            batch_status = st.empty()
+
+                            for idx, info in enumerate(file_info):
+                                status_text.text(f"Processing {info['name']}... ({idx + 1}/{len(file_info)})")
+                                batch_status.text("")
+
+                                try:
+                                    # Transform data according to mappings
+                                    transformed_df = apply_column_mappings(info['df'], column_mappings, platform, channel, territory, domain, info['name'], year, quarter, month)
+                                    all_transformed_dfs.append(transformed_df)
+
+                                    # Calculate total hours of viewership
+                                    if 'TOT_HOV' in transformed_df.columns:
+                                        total_hov += transformed_df['TOT_HOV'].sum()
+                                    elif 'TOT_MOV' in transformed_df.columns:
+                                        # Convert minutes to hours
+                                        total_hov += transformed_df['TOT_MOV'].sum() / 60.0
+
+                                    # Define progress callback for batch updates
+                                    def batch_progress(batch_num, total_batches, rows_in_batch):
+                                        batch_status.text(f"  └─ Batch {batch_num}/{total_batches}: Inserted {rows_in_batch:,} rows")
+
+                                    # Load to Snowflake with batch progress
+                                    rows_loaded = sf_conn.load_to_platform_viewership(transformed_df, progress_callback=batch_progress)
+                                    total_loaded += rows_loaded
+
+                                    batch_status.text("")  # Clear batch status
+                                    st.success(f"✓ {info['name']}: {rows_loaded:,} rows loaded")
+
+                                except Exception as e:
+                                    st.error(f"✗ {info['name']}: {str(e)}")
+
+                                # Update progress
+                                progress_bar.progress((idx + 1) / len(file_info))
+
+                            status_text.text("Complete!")
+                            st.success(f"🎉 Successfully loaded {total_loaded:,} total rows from {len(file_info)} file(s) to platform_viewership table!")
+
+                            # Invoke Lambda function after successful upload (if enabled)
+                            config = get_config()
+                            if config.ENABLE_LAMBDA:
+                                try:
+                                    # Get filenames
+                                    filenames = [info['name'] for info in file_info]
+                                    filename_str = ", ".join(filenames) if len(filenames) <= 3 else f"{filenames[0]} (+{len(filenames)-1} more)"
+
+                                    # Prepare Lambda payload with all selectors for generic table queries
+                                    lambda_payload = {
+                                        'jobType': 'Streamlit',  # Indicates data is already uploaded & normalized
+                                        'record_count': total_loaded,
+                                        'tot_hov': round(total_hov, 2),
+                                        'platform': platform,
+                                        'domain': domain if domain else None,
+                                        'filename': filename_str,
+                                        'userEmail': user_email if user_email else None,
+                                        'type': data_type if data_type else None,
+                                        'territory': territory if territory else None,
+                                        'channel': channel if channel else None,
+                                        'year': year if year else None,
+                                        'quarter': quarter if quarter else None,
+                                        'month': month if month else None,
+                                    }
+
+                                    st.info("🔄 Triggering post-processing workflow (asset matching + table migration)...")
+
+                                    # Load AWS config based on environment
+                                    aws_config = load_aws_config()
+
+                                    # Configure AWS Lambda client
+                                    lambda_client = boto3.client(
+                                        'lambda',
+                                        aws_access_key_id=aws_config['access_key_id'],
+                                        aws_secret_access_key=aws_config['secret_access_key'],
+                                        region_name=aws_config['region']
+                                    )
+
+                                    # Invoke Lambda
+                                    lambda_params = {
+                                        'FunctionName': aws_config['lambda_function_name'],
+                                        'InvocationType': 'Event',  # Asynchronous invocation
+                                        'Payload': json.dumps(lambda_payload)
+                                    }
+
+                                    print("Lambda event payload:", lambda_payload)
+
+                                    response = lambda_client.invoke(**lambda_params)
+
+                                    if response['StatusCode'] == 202:
+                                        st.success("✓ Post-processing triggered! You will receive an email when complete.")
+                                        st.info("📧 Check your email for processing status (asset matching & final table migration)")
+                                    else:
+                                        st.warning(f"Lambda invocation returned status: {response['StatusCode']}")
+
+                                except KeyError as e:
+                                    st.warning(f"⚠️ AWS configuration missing: {str(e)}. Please configure AWS credentials in secrets.toml")
+                                except Exception as e:
+                                    st.warning(f"⚠️ Could not trigger post-processing workflow: {str(e)}")
+                                    print(f"Lambda invocation error: {str(e)}")
+                            else:
+                                st.info("ℹ️ Lambda invocation is currently disabled (ENABLE_LAMBDA = False in config.py)")
+
+                        except Exception as e:
+                            st.error(f"Error loading data: {str(e)}")
+                            import traceback
+                            st.code(traceback.format_exc())
+
+def apply_column_mappings(df, column_mappings, platform, channel, territory, domain, filename=None, year=None, quarter=None, month=None):
+    """
+    Apply column mappings to transform uploaded data
+
+    Args:
+        df: Source dataframe
+        column_mappings: Dictionary mapping target columns to source columns
+        platform: Platform value to use
+        channel: Channel value to use (if provided)
+        territory: Territory value to use (if provided)
+        domain: Domain value to use (if provided)
+        filename: Filename being loaded (optional)
+        year: Year value to use (if provided)
+        quarter: Quarter value to use (if provided)
+        month: Month value to use (if provided)
+
+    Returns:
+        Transformed dataframe with standardized column names
+    """
+    transformed_data = {}
+
+    # Always use the platform from the parameter
+    transformed_data['PLATFORM'] = platform
+
+    # Add filename if provided
+    if filename:
+        transformed_data['FILENAME'] = filename
+
+    # Use channel, territory, and domain if provided (map to correct column names)
+    if channel:
+        transformed_data['PLATFORM_CHANNEL_NAME'] = channel
+    if territory:
+        transformed_data['PLATFORM_TERRITORY'] = territory
+    if domain:
+        transformed_data['DOMAIN'] = domain
+
+    # Add year, quarter, and month if provided
+    if year:
+        transformed_data['YEAR'] = year
+    if quarter:
+        transformed_data['QUARTER'] = quarter
+    if month:
+        transformed_data['MONTH'] = month
+
+    # Define special column name mappings for platform_viewership table
+    column_name_mapping = {
+        'Partner': 'PLATFORM_PARTNER_NAME',
+        'Series': 'PLATFORM_SERIES',
+        'Content Name': 'PLATFORM_CONTENT_NAME',
+        'Content ID': 'PLATFORM_CONTENT_ID',
+        'Channel': 'PLATFORM_CHANNEL_NAME',
+        'Territory': 'PLATFORM_TERRITORY',
+        'CHANNEL': 'PLATFORM_CHANNEL_NAME',  # For optional column mapping
+        'TERRITORY': 'PLATFORM_TERRITORY',   # For optional column mapping
+    }
+
+    # Apply mappings from configuration
+    for target_col, mapping_value in column_mappings.items():
+        if target_col == 'Platform':
+            # Skip Platform from mappings, we already set it
+            continue
+
+        # Handle both old and new mapping formats
+        # Old format: {"Partner": "source_column_name"}
+        # New format: {"Partner": {"source_column": "name", "transformation": {...}}}
+        if isinstance(mapping_value, dict) and 'source_column' in mapping_value:
+            # New format with optional transformation
+            source_col = mapping_value['source_column']
+            transformation_config = mapping_value.get('transformation')
+            unit = mapping_value.get('unit', 'hours')
+        else:
+            # Old format (backwards compatible) or legacy metadata
+            source_col = mapping_value
+            transformation_config = None
+            unit = column_mappings.get('_total_watch_time_unit', 'hours')
+
+        # Skip metadata keys
+        if target_col == '_total_watch_time_unit':
+            continue
+
+        # Skip Channel/Territory if not mapped but provided via dropdown
+        if target_col == 'Channel' and not source_col and channel:
+            continue
+        if target_col == 'Territory' and not source_col and territory:
+            continue
+
+        # Process if source column exists
+        if source_col and source_col in df.columns:
+            # Get source data
+            source_data = df[source_col]
+            original_data = df[source_col].copy()  # Keep a copy of original
+
+            # Apply transformation if configured
+            has_transformation = False
+            if transformation_config:
+                try:
+                    source_data = apply_transformation(source_data, transformation_config)
+                    has_transformation = True
+                except Exception as e:
+                    st.warning(f"Transformation error for {target_col}: {str(e)}")
+
+            # Handle Total Watch Time with unit conversion
+            if target_col == 'Total Watch Time':
+                if unit == 'minutes':
+                    transformed_data['TOT_MOV'] = source_data
+                else:
+                    transformed_data['TOT_HOV'] = source_data
+            else:
+                # Check if this column has a special mapping
+                if target_col in column_name_mapping:
+                    std_col_name = column_name_mapping[target_col]
+                else:
+                    # Convert target column name to uppercase with underscores
+                    std_col_name = target_col.upper().replace(' ', '_')
+
+                # If transformation was applied, store both original and transformed
+                if has_transformation and target_col in ['Channel', 'Partner', 'Territory', 'Content Name']:
+                    # Store original in PLATFORM_* column
+                    transformed_data[std_col_name] = original_data
+                    # Store transformed in new column without PLATFORM_ prefix
+                    if target_col == 'Content Name':
+                        transformed_data['CONTENT'] = source_data
+                    else:
+                        transformed_data[target_col.upper()] = source_data
+                else:
+                    # No transformation, just store as usual
+                    transformed_data[std_col_name] = source_data
+        elif source_col and source_col != "":
+            # Column specified but not found in data
+            st.warning(f"Column '{source_col}' specified in mapping but not found in uploaded file")
+
+    # Create dataframe from transformed data
+    result_df = pd.DataFrame(transformed_data)
+
+    return result_df
+
+if __name__ == "__main__":
+    main()
