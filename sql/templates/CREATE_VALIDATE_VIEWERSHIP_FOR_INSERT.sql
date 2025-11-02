@@ -34,14 +34,13 @@ $$
         countResult.next();
         const totalCount = countResult.getColumnValue('TOTAL_COUNT');
 
-        // Query for validation errors (records missing required fields)
+        // Query for BLOCKING validation errors (data quality issues)
+        // NOTE: Missing ref_id/asset_series are EXPECTED (unmatched content) and handled separately
         const validationQuery = `
             SELECT
                 id,
                 CASE
                     WHEN deal_parent IS NULL THEN 'Missing deal_parent'
-                    WHEN ref_id IS NULL THEN 'Missing ref_id'
-                    WHEN asset_series IS NULL THEN 'Missing asset_series'
                     WHEN tot_mov IS NULL THEN 'Missing tot_mov'
                     WHEN tot_hov IS NULL THEN 'Missing tot_hov'
                     WHEN week IS NULL THEN 'Missing week'
@@ -64,8 +63,6 @@ $$
               AND phase = '2'
               AND (
                   deal_parent IS NULL
-                  OR ref_id IS NULL
-                  OR asset_series IS NULL
                   OR tot_mov IS NULL
                   OR tot_hov IS NULL
                   OR week IS NULL
@@ -74,10 +71,21 @@ $$
             LIMIT 100
         `;
 
+        // Separate query for unmatched content (expected, not blocking)
+        const unmatchedQuery = `
+            SELECT COUNT(*) as unmatched_count
+            FROM {{STAGING_DB}}.public.platform_viewership
+            WHERE UPPER(platform) = '${upperPlatform}'
+              AND LOWER(filename) = '${lowerFilename}'
+              AND processed IS NULL
+              AND phase = '2'
+              AND (ref_id IS NULL OR asset_series IS NULL)
+        `;
+
         const validationStmt = snowflake.createStatement({sqlText: validationQuery});
         const validationResult = validationStmt.execute();
 
-        // Collect errors
+        // Collect BLOCKING errors only
         const errors = [];
         while (validationResult.next()) {
             errors.push({
@@ -95,10 +103,22 @@ $$
             });
         }
 
+        // Get count of unmatched content (non-blocking)
+        const unmatchedStmt = snowflake.createStatement({sqlText: unmatchedQuery});
+        const unmatchedResult = unmatchedStmt.execute();
+        unmatchedResult.next();
+        const unmatchedCount = unmatchedResult.getColumnValue('UNMATCHED_COUNT');
+
+        // Calculate matched records
+        const matchedCount = totalCount - unmatchedCount;
+
         // Build result object
+        // Validation passes if no BLOCKING errors (unmatched content is OK)
         const result = {
             valid: errors.length === 0 && totalCount > 0,
             validationCount: totalCount,
+            matchedCount: matchedCount,
+            unmatchedCount: unmatchedCount,
             errors: errors
         };
 
@@ -106,7 +126,7 @@ $$
         snowflake.execute({
             sqlText: "INSERT INTO {{UPLOAD_DB}}.public.error_log_table (log_time, log_message, procedure_name, platform) VALUES (CURRENT_TIMESTAMP(), ?, ?, ?)",
             binds: [
-                `Validation completed: ${totalCount} records checked, ${errors.length} errors found`,
+                `Validation completed: ${totalCount} records checked, ${errors.length} blocking errors, ${unmatchedCount} unmatched content (expected)`,
                 'validate_viewership_for_insert',
                 PLATFORM
             ]

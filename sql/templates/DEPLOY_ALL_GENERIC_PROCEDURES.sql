@@ -1452,7 +1452,10 @@ $$
                 return errorMessage;
             }
 
-            console.log(`Validation passed: ${validationData.validationCount} records checked.`);
+            // Log validation results with matched/unmatched breakdown
+            var matched = validationData.matchedCount || validationData.validationCount;
+            var unmatched = validationData.unmatchedCount || 0;
+            console.log(`Validation passed: ${validationData.validationCount} total records, ${matched} matched, ${unmatched} unmatched (expected).`);
         }
     } catch (validationErr) {
         // If validation procedure doesn't exist or fails, log and continue
