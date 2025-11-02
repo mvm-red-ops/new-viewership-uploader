@@ -55,3 +55,6 @@ temp/
 # Backup files
 *.bak
 *.backup
+
+# Generated SQL files (environment-specific)
+sql/generated/
