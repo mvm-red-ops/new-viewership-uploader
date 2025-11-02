@@ -78,6 +78,7 @@ echo -e "${GREEN}Configuration:${NC}"
 echo -e "  UPLOAD_DB: ${YELLOW}$UPLOAD_DB${NC}"
 echo -e "  STAGING_DB: ${YELLOW}$STAGING_DB${NC}"
 echo -e "  ASSETS_DB: ${YELLOW}$ASSETS_DB${NC}"
+echo -e "  EPISODE_DETAILS_TABLE: ${YELLOW}$EPISODE_DETAILS_TABLE${NC}"
 echo -e "  METADATA_DB: ${YELLOW}$METADATA_DB${NC}"
 echo ""
 
@@ -85,6 +86,7 @@ echo ""
 sed -e "s/{{UPLOAD_DB}}/$UPLOAD_DB/g" \
     -e "s/{{STAGING_DB}}/$STAGING_DB/g" \
     -e "s/{{ASSETS_DB}}/$ASSETS_DB/g" \
+    -e "s/{{EPISODE_DETAILS_TABLE}}/$EPISODE_DETAILS_TABLE/g" \
     -e "s/{{METADATA_DB}}/$METADATA_DB/g" \
     "$TEMPLATE_FILE" > "$OUTPUT_FILE"
 

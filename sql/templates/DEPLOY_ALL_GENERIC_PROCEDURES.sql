@@ -1164,7 +1164,7 @@ GRANT USAGE ON PROCEDURE {{UPLOAD_DB}}.public.analyze_and_process_viewership_dat
 -- PHASE 3 PROCEDURE 1: move_data_to_final_table_dynamic_generic
 -- ==============================================================================
 -- Moves processed data from {{STAGING_DB}}.public.platform_viewership to
--- {{ASSETS_DB}}.public.episode_details_test_staging.
+-- {{ASSETS_DB}}.public.{{EPISODE_DETAILS_TABLE}}.
 -- Handles both viewership and revenue data types.
 -- ==============================================================================
 
@@ -1194,7 +1194,7 @@ try {
         });
 
         sql_command = `
-            INSERT INTO {{ASSETS_DB}}.public.episode_details_test_staging(viewership_id, ref_id, deal_parent, platform_content_name, platform_series, asset_title, asset_series, content_provider, month, year_month_day, channel, channel_id, territory, territory_id, sessions, minutes, hours, year, quarter, platform, viewership_partner, domain, label, filename, phase, week, day, unique_viewers, platform_content_id, views)
+            INSERT INTO {{ASSETS_DB}}.public.{{EPISODE_DETAILS_TABLE}}(viewership_id, ref_id, deal_parent, platform_content_name, platform_series, asset_title, asset_series, content_provider, month, year_month_day, channel, channel_id, territory, territory_id, sessions, minutes, hours, year, quarter, platform, viewership_partner, domain, label, filename, phase, week, day, unique_viewers, platform_content_id, views)
             SELECT id, ref_id, deal_parent, platform_content_name, platform_series, asset_title, asset_series, content_provider, month, year_month_day, channel, channel_id, territory, territory_id, sum(tot_sessions), sum(tot_mov), sum(tot_hov), year, quarter, '${PLATFORM}', partner, 'Distribution Partners', 'Viewership', filename, CAST(phase AS VARCHAR) as phase, week, day, sum(unique_viewers) as unique_viewers, platform_content_id, sum(views) as views
             FROM {{STAGING_DB}}.public.platform_viewership
             WHERE platform = '${PLATFORM}'
@@ -1245,7 +1245,7 @@ try {
 
         if (revenueCount > 0) {
             sql_command = `
-                insert into {{ASSETS_DB}}.public.episode_details_test_staging(
+                insert into {{ASSETS_DB}}.public.{{EPISODE_DETAILS_TABLE}}(
                     viewership_id, ref_id, deal_parent, platform_content_name, platform_series, asset_title, asset_series, content_provider, month, year_month_day, channel, channel_id, territory, territory_id, sessions, year, quarter, platform, viewership_partner, domain, label, filename, phase, week, day, unique_viewers, platform_content_id, views,
                     register_name, payment_amount, revenue_amount, payment_date, payment_type, payment_title, payment_description, payment_department, payment_adjustment, payment_quarter, payment_year, payment_month, payment_support_category, payment_filename
                 )
