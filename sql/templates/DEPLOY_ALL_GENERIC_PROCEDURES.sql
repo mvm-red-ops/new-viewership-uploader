@@ -13,19 +13,20 @@
 --   1. set_phase_generic - Updates phase for records
 --   2. calculate_viewership_metrics - Calculates missing TOT_HOV/TOT_MOV
 --   3. set_date_columns_dynamic - Sets all date columns (full_date, week, quarter, year, month, year_month_day, day)
+--   4. handle_viewership_conflicts - Tracks unmatched records into flagged_metadata (called from each bucket)
 --
 -- PHASE 2:
---   4. set_deal_parent_generic - Primary: Sets all normalized fields from active_deals
---   5. set_channel_generic - Fallback: Pattern matching for channel
---   6. set_territory_generic - Fallback: Normalizes territory names
---   7. send_unmatched_deals_alert - Sends email for unmatched records
---   8. set_internal_series_generic - Matches platform series to internal dictionary
---   9. analyze_and_process_viewership_data_generic - Orchestrates bucket-based asset matching
---      (calls sub-procedures from DEPLOY_GENERIC_CONTENT_REFERENCES.sql)
+--   5. set_deal_parent_generic - Primary: Sets all normalized fields from active_deals
+--   6. set_channel_generic - Fallback: Pattern matching for channel
+--   7. set_territory_generic - Fallback: Normalizes territory names
+--   8. send_unmatched_deals_alert - Sends email for unmatched records
+--   9. set_internal_series_generic - Matches platform series to internal dictionary
+--   10. analyze_and_process_viewership_data_generic - Orchestrates bucket-based asset matching
+--       (calls sub-procedures from DEPLOY_GENERIC_CONTENT_REFERENCES.sql)
 --
 -- PHASE 3:
---   10. move_data_to_final_table_dynamic_generic - Moves data to final table
---   11. handle_final_insert_dynamic_generic - Orchestrates Phase 3
+--   11. move_data_to_final_table_dynamic_generic - Moves data to final table
+--   12. handle_final_insert_dynamic_generic - Orchestrates Phase 3
 --
 -- ==============================================================================
 
@@ -272,6 +273,234 @@ $$
 $$;
 
 GRANT USAGE ON PROCEDURE {{UPLOAD_DB}}.public.set_date_columns_dynamic(VARCHAR, VARCHAR) TO ROLE web_app;
+
+-- ==============================================================================
+-- SHARED PROCEDURE: handle_viewership_conflicts
+-- ==============================================================================
+-- Tracks unmatched records from asset matching buckets into appropriate conflict tables
+-- Called at the end of each bucket matching path to capture conflicts
+--
+-- Routing Logic:
+--   - FULL_DATA bucket → {{METADATA_DB}}.public.flagged_metadata
+--     (complete metadata: has ref_id + internal_series + episode + season)
+--   - All other buckets → {{METADATA_DB}}.public.conflicts
+--     (incomplete metadata: missing ref_id or other required fields)
+--
+-- Parameters:
+--   - platform: Platform being processed
+--   - filename: Source filename
+--   - conflict_type: Description of why records didn't match
+--   - bucket_name: Name of the bucket/matching strategy (FULL_DATA, SERIES_SEASON_EPISODE, etc.)
+-- ==============================================================================
+
+CREATE OR REPLACE PROCEDURE {{UPLOAD_DB}}.public.handle_viewership_conflicts(
+    "PLATFORM" VARCHAR,
+    "FILENAME" VARCHAR,
+    "CONFLICT_TYPE" VARCHAR,
+    "BUCKET_NAME" VARCHAR
+)
+RETURNS VARCHAR
+LANGUAGE JAVASCRIPT
+EXECUTE AS CALLER
+AS
+$$
+try {
+    const platform = PLATFORM;
+    const filename = FILENAME;
+    const conflictType = CONFLICT_TYPE;
+    const bucketName = BUCKET_NAME;
+    const platformUpper = platform.toUpperCase();
+
+    // Build notes string with all context
+    const notesPrefix = `Platform: ${platform}, Bucket: ${bucketName}, Conflict: ${conflictType}, Filename: ${filename}, Date: `;
+
+    // Route to different tables based on bucket type:
+    // - FULL_DATA only → flagged_metadata (complete metadata: has ref_id + internal_series + episode + season)
+    // - All others including SERIES_SEASON_EPISODE → conflicts (incomplete metadata: missing ref_id or other fields)
+    const useFlaggedMetadata = (bucketName === 'FULL_DATA');
+
+    let conflictDataQuery = '';
+
+    if (useFlaggedMetadata) {
+        // For FULL_DATA only: Use flagged_metadata
+        // These records have complete metadata (ref_id, internal_series, season, episode) but still failed to match
+        conflictDataQuery = `
+            MERGE INTO {{METADATA_DB}}.public.flagged_metadata T
+            USING (
+                SELECT
+                    v.platform_content_name AS title,
+                    v.ref_id,
+                    v.internal_series,
+                    v.season_number,
+                    v.episode_number,
+                    '${notesPrefix}' || COALESCE(TO_VARCHAR(MIN(v.month)), 'Unknown') || '/' || COALESCE(TO_VARCHAR(MIN(v.year)), 'Unknown') as notes
+                FROM {{STAGING_DB}}.public.platform_viewership v
+                JOIN {{UPLOAD_DB}}.PUBLIC.TEMP_${platformUpper}_${bucketName}_BUCKET b ON v.id = b.id
+                WHERE v.platform = '${platform}'
+                  AND v.filename = '${filename}'
+                  AND v.content_provider IS NULL
+                  AND v.processed IS NULL
+                GROUP BY v.platform_content_name, v.ref_id, v.internal_series, v.season_number, v.episode_number
+            ) S
+            ON (T.title = S.title OR (T.title IS NULL AND S.title IS NULL))
+            AND (T.ref_id = S.ref_id OR (T.ref_id IS NULL AND S.ref_id IS NULL))
+            AND (T.internal_series = S.internal_series OR (T.internal_series IS NULL AND S.internal_series IS NULL))
+            AND (T.season_number = S.season_number OR (T.season_number IS NULL AND S.season_number IS NULL))
+            AND (T.episode_number = S.episode_number OR (T.episode_number IS NULL AND S.episode_number IS NULL))
+
+            -- If match exists, append to notes
+            WHEN MATCHED THEN UPDATE SET
+                T.notes = T.notes || '; ' || S.notes
+
+            -- If no match, insert new conflict row
+            WHEN NOT MATCHED THEN INSERT (
+                title,
+                ref_id,
+                internal_series,
+                season_number,
+                episode_number,
+                notes
+            ) VALUES (
+                S.title,
+                S.ref_id,
+                S.internal_series,
+                S.season_number,
+                S.episode_number,
+                S.notes
+            )
+        `;
+    } else {
+        // For SERIES_SEASON_EPISODE, REF_ID_ONLY, REF_ID_SERIES, SERIES_ONLY, TITLE_ONLY: Use conflicts
+        // These records have incomplete metadata (missing ref_id or other fields) and need manual review
+        conflictDataQuery = `
+            MERGE INTO {{METADATA_DB}}.public.conflicts T
+            USING (
+                SELECT
+                    MIN(v.id) AS id,
+                    MAX(v.ref_id) AS ref_id,
+                    v.platform_content_name AS title,
+                    NULL AS episode_id,
+                    '${notesPrefix}' || COALESCE(TO_VARCHAR(MIN(v.month)), 'Unknown') || '/' || COALESCE(TO_VARCHAR(MIN(v.year)), 'Unknown') as notes,
+                    '${filename}' as filename,
+                    NULL as processed
+                FROM {{STAGING_DB}}.public.platform_viewership v
+                JOIN {{UPLOAD_DB}}.PUBLIC.TEMP_${platformUpper}_${bucketName}_BUCKET b ON v.id = b.id
+                WHERE v.platform = '${platform}'
+                  AND v.filename = '${filename}'
+                  AND v.content_provider IS NULL
+                  AND v.processed IS NULL
+                GROUP BY v.platform_content_name
+            ) S
+            ON (T.title = S.title OR (T.title IS NULL AND S.title IS NULL))
+
+            -- If match exists, append to notes
+            WHEN MATCHED THEN UPDATE SET
+                T.notes = T.notes || '; ' || S.notes
+
+            -- If no match, insert new conflict row
+            WHEN NOT MATCHED THEN INSERT (
+                id,
+                ref_id,
+                title,
+                episode_id,
+                notes,
+                filename,
+                processed
+            ) VALUES (
+                S.id,
+                S.ref_id,
+                S.title,
+                S.episode_id,
+                S.notes,
+                S.filename,
+                S.processed
+            )
+        `;
+    }
+
+    const insertConflictStatement = snowflake.createStatement({sqlText: conflictDataQuery});
+    insertConflictStatement.execute();
+    const rowsFlagged = insertConflictStatement.getNumRowsAffected();
+
+    const targetTable = useFlaggedMetadata ? '{{METADATA_DB}}.public.flagged_metadata' : '{{METADATA_DB}}.public.conflicts';
+
+    // Insert individual records into record_reprocessing_batch_logs
+    // This gives Lambda the exact count of failed individual records by filename
+    // Note: conflicts/flagged_metadata have one row per unique title (MERGED)
+    //       but record_reprocessing_batch_logs has one row per viewership_id
+    const logRecordsSql = `
+        INSERT INTO {{METADATA_DB}}.public.record_reprocessing_batch_logs (
+            title,
+            viewership_id,
+            filename,
+            notes,
+            platform
+        )
+        SELECT
+            v.platform_content_name,
+            v.id,
+            v.filename,
+            'Conflict Record: ${conflictType}',
+            '${platform}'
+        FROM {{STAGING_DB}}.public.platform_viewership v
+        JOIN {{UPLOAD_DB}}.PUBLIC.TEMP_${platformUpper}_${bucketName}_BUCKET b ON v.id = b.id
+        WHERE v.platform = '${platform}'
+          AND v.filename = '${filename}'
+          AND v.content_provider IS NULL
+          AND v.processed IS NULL
+          AND NOT EXISTS (
+              SELECT 1
+              FROM {{METADATA_DB}}.public.record_reprocessing_batch_logs l
+              WHERE l.viewership_id = v.id
+          )
+    `;
+
+    const insertRecordsStatement = snowflake.createStatement({sqlText: logRecordsSql});
+    insertRecordsStatement.execute();
+    const rowsLogged = insertRecordsStatement.getNumRowsAffected();
+
+    // Log to error_log_table
+    const logSql = `
+        INSERT INTO {{UPLOAD_DB}}.public.error_log_table (
+            log_time,
+            log_message,
+            procedure_name,
+            platform,
+            status,
+            rows_affected
+        ) VALUES (
+            CURRENT_TIMESTAMP(),
+            'Inserted ${rowsFlagged} unmatched records from ${bucketName} bucket into ${targetTable} and ${rowsLogged} individual records into record_reprocessing_batch_logs: ${conflictType}',
+            'handle_viewership_conflicts',
+            '${platform}',
+            'WARNING',
+            ${rowsLogged}
+        )
+    `;
+
+    snowflake.execute({sqlText: logSql});
+
+    return `Inserted ${rowsFlagged} conflict records into ${targetTable} and ${rowsLogged} individual records into record_reprocessing_batch_logs from ${bucketName} bucket (${platform} - ${filename})`;
+
+} catch (err) {
+    const errorMessage = "Error in handle_viewership_conflicts: " + err.message;
+
+    // Log the error
+    try {
+        snowflake.execute({
+            sqlText: "INSERT INTO {{UPLOAD_DB}}.public.error_log_table (log_time, log_message, procedure_name, platform, status, error_message) VALUES (CURRENT_TIMESTAMP(), ?, ?, ?, 'ERROR', ?)",
+            binds: [errorMessage, 'handle_viewership_conflicts', PLATFORM, err.message]
+        });
+    } catch (logErr) {
+        // If even logging fails, just return the error
+    }
+
+    // Return error but don't throw - this allows the pipeline to continue even if conflict tracking fails
+    return errorMessage;
+}
+$$;
+
+GRANT USAGE ON PROCEDURE {{UPLOAD_DB}}.public.handle_viewership_conflicts(VARCHAR, VARCHAR, VARCHAR, VARCHAR) TO ROLE web_app;
 
 -- ==============================================================================
 -- PHASE 2 PROCEDURE 1: set_deal_parent_generic
@@ -811,6 +1040,20 @@ try {
         logStep("Dropped previous unmatched records table if it existed", "INFO");
     } catch (err) {
         logStep(`Warning: Error dropping unmatched records table: ${err.toString()}`, "WARNING");
+    }
+
+    // Delete old conflict records from previous runs of this same filename
+    // This ensures Lambda gets accurate unmatched count for the current batch only
+    if (filenameArg) {
+        try {
+            const deleteResult = snowflake.execute({
+                sqlText: `DELETE FROM {{METADATA_DB}}.public.record_reprocessing_batch_logs WHERE filename = '${filenameArg.replace(/'/g, "''")}'`
+            });
+            const deletedCount = deleteResult.getNumRowsAffected();
+            logStep(`Deleted ${deletedCount} old conflict records for filename: ${filenameArg}`, "INFO");
+        } catch (err) {
+            logStep(`Warning: Error deleting old conflict records: ${err.toString()}`, "WARNING");
+        }
     }
 
     // Track successful buckets and their record counts

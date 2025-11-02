@@ -189,59 +189,21 @@ try {
 
         // Call the conflicts handling procedure
         try {
-            const conflictDataQuery = `
-                MERGE INTO {{UPLOAD_DB}}.public.flagged_metadata T
-                USING (
-                    SELECT DISTINCT
-                        v.platform_content_name AS title,
-                        v.ref_id,
-                        v.internal_series,
-                        v.season_number,
-                        v.episode_number,
-                        'Platform: ' || v.platform || ', ' || 'Date: ' || v.month || '/' || year as notes
-                    FROM {{STAGING_DB}}.public.platform_viewership v
-                    JOIN UPLOAD_DB.PUBLIC.TEMP_${platformArg}_UNMATCHED u ON v.id = u.id
-                    WHERE v.platform = '${platformArg}'
-                      AND v.content_provider IS NULL
-                      AND v.processed IS NULL
-                      AND v.ref_id IS NOT NULL
-                      AND v.episode_number IS NOT NULL
-                      AND v.season_number IS NOT NULL
-                      AND v.internal_series IS NOT NULL
-                ) S
-                ON T.title = S.title
-                AND T.ref_id = S.ref_id
-                AND T.internal_series = S.internal_series
-                AND T.season_number = S.season_number
-                AND T.episode_number = S.episode_number
-
-                -- If match, append to notes
-                WHEN MATCHED THEN UPDATE SET
-                    T.notes = T.notes || '; ' || S.notes
-
-                -- If no match, insert new row
-                WHEN NOT MATCHED THEN INSERT (
-                    title,
-                    ref_id,
-                    internal_series,
-                    season_number,
-                    episode_number,
-                    notes
-                ) VALUES (
-                    S.title,
-                    S.ref_id,
-                    S.internal_series,
-                    S.season_number,
-                    S.episode_number,
-                    S.notes
-                );
+            const conflictType = "No match in FULL_DATA bucket (requires exact ref_id + episode/season + title match)";
+            const callConflictHandlerSql = `
+                CALL {{UPLOAD_DB}}.public.handle_viewership_conflicts(
+                    '${platformArg.replace(/'/g, "''")}',
+                    '${filenameArg ? filenameArg.replace(/'/g, "''") : 'NULL'}',
+                    '${conflictType}',
+                    '${bucketName}'
+                )
             `;
 
-            const insertFlaggedDataStatement = snowflake.createStatement({sqlText: conflictDataQuery});
-            insertFlaggedDataStatement.execute();
-            const insertFlagged = insertFlaggedDataStatement.getNumRowsAffected();
-
-            logStep("Inserted conflict data into flagged_metadata table", "INFO", insertFlagged.toString())
+            const conflictResult = snowflake.execute({sqlText: callConflictHandlerSql});
+            if (conflictResult.next()) {
+                const resultMessage = conflictResult.getColumnValue(1);
+                logStep(`Conflict handling: ${resultMessage}`, "INFO");
+            }
         } catch (conflictErr) {
             logStep(`Warning: Error handling conflicts: ${conflictErr.toString()}`, "WARNING");
             // Continue with the procedure, don't throw the error
@@ -1033,64 +995,10 @@ try {
         }
         logStep(`Found ${potentialCount} potential unmatched records in viewership table`, "INFO");
 
-        // Call the conflicts handling procedure
-        try {
-            const conflictDataQuery = `
-                MERGE INTO {{UPLOAD_DB}}.public.flagged_metadata T
-                USING (
-                    SELECT DISTINCT
-                        v.platform_content_name AS title,
-                        v.ref_id,
-                        v.internal_series,
-                        v.season_number,
-                        v.episode_number,
-                        'Platform: ' || v.platform || ', ' || 'Date: ' || v.month || '/' || year as notes
-                    FROM {{STAGING_DB}}.public.platform_viewership v
-                    JOIN UPLOAD_DB.PUBLIC.TEMP_${platformArg}_UNMATCHED u ON v.id = u.id
-                    WHERE v.platform = '${platformArg}'
-                      AND v.content_provider IS NULL
-                      AND v.processed IS NULL
-                      AND v.internal_series IS NOT NULL
-                      AND v.episode_number IS NOT NULL
-                      AND v.season_number IS NOT NULL
-                ) S
-                ON T.title = S.title
-                AND T.ref_id = S.ref_id
-                AND T.internal_series = S.internal_series
-                AND T.season_number = S.season_number
-                AND T.episode_number = S.episode_number
-
-                -- If match, append to notes
-                WHEN MATCHED THEN UPDATE SET
-                    T.notes = T.notes || '; ' || S.notes
-
-                -- If no match, insert new row
-                WHEN NOT MATCHED THEN INSERT (
-                    title,
-                    ref_id,
-                    internal_series,
-                    season_number,
-                    episode_number,
-                    notes
-                ) VALUES (
-                    S.title,
-                    S.ref_id,
-                    S.internal_series,
-                    S.season_number,
-                    S.episode_number,
-                    S.notes
-                );
-            `;
-
-            const insertFlaggedDataStatement = snowflake.createStatement({sqlText: conflictDataQuery});
-            insertFlaggedDataStatement.execute();
-            const insertFlagged = insertFlaggedDataStatement.getNumRowsAffected();
-
-            logStep("Inserted conflict data into flagged_metadata table", "INFO", insertFlagged.toString())
-        } catch (conflictErr) {
-            logStep(`Warning: Error handling conflicts: ${conflictErr.toString()}`, "WARNING");
-            // Continue with the procedure, don't throw the error
-        }
+        // NOTE: SERIES_SEASON_EPISODE does NOT call handle_viewership_conflicts
+        // In the original architecture, unmatched records from this bucket are handled differently
+        // They have complete metadata (series+episode+season) so they go directly to flagged_metadata
+        // via inline logic in the original, not through the conflicts handler
 
         // IMPORTANT: Log the exact return string format that will be used
         const returnStr = `Update completed successfully. Strategy: ${bucketName}, updated ${rows_affected} rows`;
