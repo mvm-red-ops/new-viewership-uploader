@@ -1705,6 +1705,12 @@ def upload_and_map_tab(sf_conn):
                     if col not in SECTION_HEADERS
                 ]
 
+                # Debug: Show what's in optional_columns (for troubleshooting)
+                if st.session_state.edit_mode:
+                    with st.expander("🔍 Debug Info", expanded=False):
+                        st.caption(f"Current optional columns: {st.session_state.optional_columns}")
+                        st.caption(f"Total optional columns available: {len([c for c in OPTIONAL_COLUMNS_LIST if c not in SECTION_HEADERS])}")
+
                 # Display existing optional columns
                 for idx, opt_col in enumerate(st.session_state.optional_columns):
                     # Get current column index in the list, or use current value
