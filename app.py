@@ -843,11 +843,10 @@ def get_cached_channels(_sf_conn):
     """Get channels - hardcoded list"""
     return [
         "Nosey",
-        "The Confess",
-        "Judge Faith",
-        "Presented by Nosey",
-        "VOD",
-        "Escandalos"
+        "Confess by Nosey",
+        "Judge Nosey",
+        "Nosey Escandalos",
+        "VOD"
     ]
 
 @st.cache_data(ttl=300)  # Cache for 5 minutes
