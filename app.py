@@ -15,11 +15,21 @@ from wide_format_handler import detect_and_transform
 
 # Transformation Builder Modal
 @st.dialog("🔧 Transformation Builder", width="large")
-def transformation_builder_modal(column_name, sample_data):
-    """Modal dialog for building transformations"""
+def transformation_builder_modal(column_name, sample_data, full_data=None):
+    """Modal dialog for building transformations
+
+    Args:
+        column_name: Name of the column being transformed
+        sample_data: Small sample (e.g., 10 rows) for fast preview
+        full_data: Full column data for profiling (optional)
+    """
 
     # Store that this modal is open
     st.session_state[f"modal_open_{column_name}"] = True
+
+    # Store full data for profiling
+    if full_data is not None:
+        st.session_state[f"full_data_for_profile_{column_name}"] = full_data
 
     st.write(f"**Transforming column:** `{column_name}`")
 
@@ -660,101 +670,16 @@ def transformation_builder_modal(column_name, sample_data):
             except Exception as e:
                 st.error(f"Transformation error: {str(e)}")
 
-            # Data Quality Check - analyze transformation across full dataset
-            st.divider()
-            with st.expander("🔍 Data Quality Check", expanded=False):
-                st.caption("Analyzing transformation across all sample data to detect potential issues...")
-
-                try:
-                    import pandas as pd
-                    from collections import Counter
-
-                    # Apply transformation to ALL sample data (not just preview)
-                    full_sample_series = pd.Series(sample_data)
-                    full_transformed = apply_transformation(full_sample_series, transformation_config)
-
-                    # Check if any step was a split - if so, analyze split consistency
-                    has_split_step = any(step.get('type') == 'split' for step in steps)
-
-                    if has_split_step:
-                        st.write("**Split Consistency Analysis:**")
-
-                        # Find the split step and analyze part counts
-                        split_part_counts = []
-                        for val in sample_data:
-                            temp_val = val
-                            for step in steps:
-                                temp_val = preview_transformation_step(temp_val, step)
-                                if step.get('type') == 'split' and isinstance(temp_val, list):
-                                    split_part_counts.append(len(temp_val))
-                                    break  # Count parts from first split only
-
-                        if split_part_counts:
-                            count_distribution = Counter(split_part_counts)
-                            total_records = len(split_part_counts)
-
-                            # Show distribution
-                            st.write("Part count distribution:")
-                            for part_count, frequency in sorted(count_distribution.items()):
-                                percentage = (frequency / total_records) * 100
-                                emoji = "✓" if percentage > 80 else "⚠️"
-                                st.caption(f"  {emoji} {frequency:,} records ({percentage:.1f}%) split into **{part_count} parts**")
-
-                            # Warn about inconsistencies
-                            if len(count_distribution) > 1:
-                                st.warning("⚠️ **Inconsistent split detected!** Records split into different numbers of parts.")
-
-                                # Find outlier examples
-                                most_common_count = count_distribution.most_common(1)[0][0]
-                                outlier_examples = []
-
-                                for val in sample_data[:50]:  # Check first 50 for examples
-                                    temp_val = val
-                                    for step in steps:
-                                        temp_val = preview_transformation_step(temp_val, step)
-                                        if step.get('type') == 'split' and isinstance(temp_val, list):
-                                            if len(temp_val) != most_common_count:
-                                                outlier_examples.append((val, temp_val))
-                                            break
-                                    if len(outlier_examples) >= 3:
-                                        break
-
-                                if outlier_examples:
-                                    st.write(f"**Examples of outliers** (expected {most_common_count} parts):")
-                                    for orig, result in outlier_examples[:3]:
-                                        st.caption(f"  • `{orig}` → {result} ({len(result)} parts)")
-                                    st.info("💡 Tip: Review these outliers. You may need conditional logic or a different delimiter.")
-
-                    # Show unique output values (helps spot issues)
-                    st.write("**Unique Output Values:**")
-                    unique_values = full_transformed.unique()
-
-                    # Filter out lists for display
-                    unique_values_display = [v for v in unique_values if not isinstance(v, list)]
-
-                    if len(unique_values_display) > 0:
-                        st.caption(f"Found **{len(unique_values_display)}** unique values after transformation:")
-
-                        # Show first 20 unique values
-                        display_limit = 20
-                        if len(unique_values_display) <= display_limit:
-                            st.caption(f"  {', '.join(f'`{v}`' for v in sorted(unique_values_display))}")
-                        else:
-                            st.caption(f"  {', '.join(f'`{v}`' for v in sorted(unique_values_display)[:display_limit])}")
-                            st.caption(f"  ... and {len(unique_values_display) - display_limit} more")
-
-                        # Warn if there are too many unique values (might indicate an issue)
-                        uniqueness_ratio = len(unique_values_display) / len(sample_data)
-                        if uniqueness_ratio > 0.5 and len(sample_data) > 10:
-                            st.warning(f"⚠️ High uniqueness ({uniqueness_ratio:.1%}): Many different output values. Review to ensure transformation is working as expected.")
-                    else:
-                        st.caption("All values are arrays (not yet extracted)")
-
-                except Exception as e:
-                    st.error(f"Quality check error: {str(e)}")
-
-    # Save button
+    # Action buttons
     st.divider()
+
+    # Profile Data button (if we have steps configured)
+    if steps and transformation_config:
+        if st.button("🔍 Profile Data", use_container_width=True, help="Analyze transformation across all data to detect issues"):
+            st.session_state[f"profile_modal_open_{column_name}"] = True
+            st.session_state[f"profile_transformation_{column_name}"] = transformation_config
+            st.rerun()
+
     col1, col2 = st.columns(2)
 
     with col1:
@@ -770,6 +695,132 @@ def transformation_builder_modal(column_name, sample_data):
             st.session_state[f"transform_applied_{column_name}"] = False
             st.session_state[f"modal_open_{column_name}"] = False
             st.rerun()
+
+
+# Profile Data Modal
+@st.dialog("🔍 Data Profile", width="large")
+def profile_data_modal(column_name, transformation_config, full_data, steps):
+    """Modal for profiling transformation across full dataset
+
+    Args:
+        column_name: Name of the column
+        transformation_config: The transformation to analyze
+        full_data: Full column data to analyze
+        steps: Transformation steps
+    """
+
+    st.write(f"**Analyzing transformation for:** `{column_name}`")
+    st.caption(f"Analyzing {len(full_data):,} records...")
+
+    try:
+        import pandas as pd
+        from collections import Counter
+
+        # Limit to reasonable size for performance (analyze up to 1000 rows)
+        analysis_size = min(1000, len(full_data))
+        analysis_data = full_data[:analysis_size]
+
+        if analysis_size < len(full_data):
+            st.info(f"📊 Analyzing first {analysis_size:,} of {len(full_data):,} records for performance")
+
+        # Apply transformation to analysis data
+        full_sample_series = pd.Series(analysis_data)
+        full_transformed = apply_transformation(full_sample_series, transformation_config)
+
+        # Check if any step was a split
+        has_split_step = any(step.get('type') == 'split' for step in steps)
+
+        if has_split_step:
+            st.subheader("Split Consistency Analysis")
+
+            # Find the split step and analyze part counts
+            split_part_counts = []
+            for val in analysis_data:
+                temp_val = val
+                for step in steps:
+                    temp_val = preview_transformation_step(temp_val, step)
+                    if step.get('type') == 'split' and isinstance(temp_val, list):
+                        split_part_counts.append(len(temp_val))
+                        break  # Count parts from first split only
+
+            if split_part_counts:
+                count_distribution = Counter(split_part_counts)
+                total_records = len(split_part_counts)
+
+                # Show distribution
+                st.write("**Part count distribution:**")
+                for part_count, frequency in sorted(count_distribution.items()):
+                    percentage = (frequency / total_records) * 100
+                    emoji = "✓" if percentage > 80 else "⚠️"
+                    st.caption(f"  {emoji} {frequency:,} records ({percentage:.1f}%) split into **{part_count} parts**")
+
+                # Warn about inconsistencies
+                if len(count_distribution) > 1:
+                    st.warning("⚠️ **Inconsistent split detected!** Records split into different numbers of parts.")
+
+                    # Find outlier examples
+                    most_common_count = count_distribution.most_common(1)[0][0]
+                    outlier_examples = []
+
+                    for val in analysis_data[:100]:  # Check first 100 for examples
+                        temp_val = val
+                        for step in steps:
+                            temp_val = preview_transformation_step(temp_val, step)
+                            if step.get('type') == 'split' and isinstance(temp_val, list):
+                                if len(temp_val) != most_common_count:
+                                    outlier_examples.append((val, temp_val))
+                                break
+                        if len(outlier_examples) >= 5:
+                            break
+
+                    if outlier_examples:
+                        st.write(f"**Examples of outliers** (expected {most_common_count} parts):")
+                        for orig, result in outlier_examples[:5]:
+                            st.caption(f"  • `{orig}` → {result} ({len(result)} parts)")
+                        st.info("💡 **Tip:** Review these outliers. You may need conditional logic or a different delimiter.")
+                else:
+                    st.success("✓ All records split consistently")
+
+        # Show unique output values
+        st.divider()
+        st.subheader("Unique Output Values")
+
+        unique_values = full_transformed.unique()
+
+        # Filter out lists for display
+        unique_values_display = [v for v in unique_values if not isinstance(v, list)]
+
+        if len(unique_values_display) > 0:
+            st.write(f"Found **{len(unique_values_display)}** unique values after transformation:")
+
+            # Show all unique values (or first 50 if too many)
+            display_limit = 50
+            if len(unique_values_display) <= display_limit:
+                values_display = ', '.join(f'`{v}`' for v in sorted(unique_values_display))
+                st.markdown(values_display)
+            else:
+                values_display = ', '.join(f'`{v}`' for v in sorted(unique_values_display)[:display_limit])
+                st.markdown(values_display)
+                st.caption(f"... and {len(unique_values_display) - display_limit} more")
+
+            # Warn if there are too many unique values
+            uniqueness_ratio = len(unique_values_display) / len(analysis_data)
+            if uniqueness_ratio > 0.5 and len(analysis_data) > 10:
+                st.warning(f"⚠️ **High uniqueness ({uniqueness_ratio:.1%}):** Many different output values. Review to ensure transformation is working as expected.")
+            else:
+                st.success(f"✓ Uniqueness ratio: {uniqueness_ratio:.1%}")
+        else:
+            st.caption("All values are arrays (not yet extracted to final values)")
+
+    except Exception as e:
+        st.error(f"Profile error: {str(e)}")
+        import traceback
+        st.code(traceback.format_exc())
+
+    # Close button
+    if st.button("Close", use_container_width=True):
+        st.session_state[f"profile_modal_open_{column_name}"] = False
+        st.rerun()
 
 
 # Page configuration
@@ -1484,12 +1535,24 @@ def upload_and_map_tab(sf_conn):
                         with col_btn:
                             if st.button("🔧 Transform", key=f"open_transform_{required_col}"):
                                 st.session_state[f"modal_open_{required_col}"] = True
+                                # Keep small sample for fast preview (10 rows)
                                 st.session_state[f"modal_sample_data_{required_col}"] = df[selected].head(10).tolist()
+                                # Store full column for profiling
+                                st.session_state[f"full_data_{required_col}"] = df[selected].tolist()
 
                         # Keep modal open if it should be open
                         if st.session_state.get(f"modal_open_{required_col}", False):
                             sample_values = st.session_state.get(f"modal_sample_data_{required_col}", df[selected].head(10).tolist())
-                            transformation_builder_modal(required_col, sample_values)
+                            full_data = st.session_state.get(f"full_data_{required_col}", df[selected].tolist())
+                            transformation_builder_modal(required_col, sample_values, full_data)
+
+                        # Open profile modal if requested
+                        if st.session_state.get(f"profile_modal_open_{required_col}", False):
+                            full_data = st.session_state.get(f"full_data_for_profile_{required_col}", df[selected].tolist())
+                            transformation_config = st.session_state.get(f"profile_transformation_{required_col}")
+                            # Get steps from the transformation config
+                            steps = transformation_config.get('steps', []) if transformation_config.get('type') == 'chain' else [transformation_config]
+                            profile_data_modal(required_col, transformation_config, full_data, steps)
 
                         with col_status:
                             # Show transformation status
@@ -1648,11 +1711,21 @@ def upload_and_map_tab(sf_conn):
                                 if st.button("🔧", key=f"open_transform_opt_{idx}"):
                                     st.session_state[f"modal_open_{opt_column_key}"] = True
                                     st.session_state[f"modal_sample_data_{opt_column_key}"] = df[opt_selected].head(10).tolist()
+                                    st.session_state[f"full_data_{opt_column_key}"] = df[opt_selected].tolist()
 
                             # Keep modal open if it should be open
                             if st.session_state.get(f"modal_open_{opt_column_key}", False):
                                 opt_sample_values = st.session_state.get(f"modal_sample_data_{opt_column_key}", df[opt_selected].head(10).tolist())
-                                transformation_builder_modal(opt_column_key, opt_sample_values)
+                                opt_full_data = st.session_state.get(f"full_data_{opt_column_key}", df[opt_selected].tolist())
+                                transformation_builder_modal(opt_column_key, opt_sample_values, opt_full_data)
+
+                            # Open profile modal if requested
+                            if st.session_state.get(f"profile_modal_open_{opt_column_key}", False):
+                                opt_full_data = st.session_state.get(f"full_data_for_profile_{opt_column_key}", df[opt_selected].tolist())
+                                opt_transformation_config = st.session_state.get(f"profile_transformation_{opt_column_key}")
+                                # Get steps from the transformation config
+                                opt_steps = opt_transformation_config.get('steps', []) if opt_transformation_config.get('type') == 'chain' else [opt_transformation_config]
+                                profile_data_modal(opt_column_key, opt_transformation_config, opt_full_data, opt_steps)
 
                             with col_status2:
                                 # Show transformation status
