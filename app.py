@@ -660,6 +660,99 @@ def transformation_builder_modal(column_name, sample_data):
             except Exception as e:
                 st.error(f"Transformation error: {str(e)}")
 
+            # Data Quality Check - analyze transformation across full dataset
+            st.divider()
+            with st.expander("🔍 Data Quality Check", expanded=False):
+                st.caption("Analyzing transformation across all sample data to detect potential issues...")
+
+                try:
+                    import pandas as pd
+                    from collections import Counter
+
+                    # Apply transformation to ALL sample data (not just preview)
+                    full_sample_series = pd.Series(sample_data)
+                    full_transformed = apply_transformation(full_sample_series, transformation_config)
+
+                    # Check if any step was a split - if so, analyze split consistency
+                    has_split_step = any(step.get('type') == 'split' for step in steps)
+
+                    if has_split_step:
+                        st.write("**Split Consistency Analysis:**")
+
+                        # Find the split step and analyze part counts
+                        split_part_counts = []
+                        for val in sample_data:
+                            temp_val = val
+                            for step in steps:
+                                temp_val = preview_transformation_step(temp_val, step)
+                                if step.get('type') == 'split' and isinstance(temp_val, list):
+                                    split_part_counts.append(len(temp_val))
+                                    break  # Count parts from first split only
+
+                        if split_part_counts:
+                            count_distribution = Counter(split_part_counts)
+                            total_records = len(split_part_counts)
+
+                            # Show distribution
+                            st.write("Part count distribution:")
+                            for part_count, frequency in sorted(count_distribution.items()):
+                                percentage = (frequency / total_records) * 100
+                                emoji = "✓" if percentage > 80 else "⚠️"
+                                st.caption(f"  {emoji} {frequency:,} records ({percentage:.1f}%) split into **{part_count} parts**")
+
+                            # Warn about inconsistencies
+                            if len(count_distribution) > 1:
+                                st.warning("⚠️ **Inconsistent split detected!** Records split into different numbers of parts.")
+
+                                # Find outlier examples
+                                most_common_count = count_distribution.most_common(1)[0][0]
+                                outlier_examples = []
+
+                                for val in sample_data[:50]:  # Check first 50 for examples
+                                    temp_val = val
+                                    for step in steps:
+                                        temp_val = preview_transformation_step(temp_val, step)
+                                        if step.get('type') == 'split' and isinstance(temp_val, list):
+                                            if len(temp_val) != most_common_count:
+                                                outlier_examples.append((val, temp_val))
+                                            break
+                                    if len(outlier_examples) >= 3:
+                                        break
+
+                                if outlier_examples:
+                                    st.write(f"**Examples of outliers** (expected {most_common_count} parts):")
+                                    for orig, result in outlier_examples[:3]:
+                                        st.caption(f"  • `{orig}` → {result} ({len(result)} parts)")
+                                    st.info("💡 Tip: Review these outliers. You may need conditional logic or a different delimiter.")
+
+                    # Show unique output values (helps spot issues)
+                    st.write("**Unique Output Values:**")
+                    unique_values = full_transformed.unique()
+
+                    # Filter out lists for display
+                    unique_values_display = [v for v in unique_values if not isinstance(v, list)]
+
+                    if len(unique_values_display) > 0:
+                        st.caption(f"Found **{len(unique_values_display)}** unique values after transformation:")
+
+                        # Show first 20 unique values
+                        display_limit = 20
+                        if len(unique_values_display) <= display_limit:
+                            st.caption(f"  {', '.join(f'`{v}`' for v in sorted(unique_values_display))}")
+                        else:
+                            st.caption(f"  {', '.join(f'`{v}`' for v in sorted(unique_values_display)[:display_limit])}")
+                            st.caption(f"  ... and {len(unique_values_display) - display_limit} more")
+
+                        # Warn if there are too many unique values (might indicate an issue)
+                        uniqueness_ratio = len(unique_values_display) / len(sample_data)
+                        if uniqueness_ratio > 0.5 and len(sample_data) > 10:
+                            st.warning(f"⚠️ High uniqueness ({uniqueness_ratio:.1%}): Many different output values. Review to ensure transformation is working as expected.")
+                    else:
+                        st.caption("All values are arrays (not yet extracted)")
+
+                except Exception as e:
+                    st.error(f"Quality check error: {str(e)}")
+
     # Save button
     st.divider()
     col1, col2 = st.columns(2)
