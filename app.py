@@ -2268,6 +2268,15 @@ def load_data_tab(sf_conn):
             # Update session state when changed
             st.session_state.user_email = user_email
 
+            # Debug mode toggle
+            debug_mode = st.checkbox(
+                "🐛 DEBUG MODE - Load only first 100 rows",
+                value=False,
+                help="Enable this to test with only the first 100 rows of each file. Much faster for testing!"
+            )
+            if debug_mode:
+                st.warning("⚠️ DEBUG MODE ACTIVE: Only the first 100 rows of each file will be loaded. This is for testing only!")
+
             st.subheader("2. Upload Data Files")
 
             uploaded_files = st.file_uploader(
@@ -2300,6 +2309,12 @@ def load_data_tab(sf_conn):
                             st.info(f"📊 Wide format detected in {uploaded_file.name} - transformed to long format ({len(df)} records)")
                             if filtered_count > 0:
                                 st.warning(f"⚠️ Filtered out {filtered_count} rows from {uploaded_file.name} with no content identification (blank title/series)")
+
+                        # Apply debug mode limit if enabled
+                        if debug_mode:
+                            original_count = len(df)
+                            df = df.head(100)
+                            st.info(f"🐛 DEBUG MODE: Limited {uploaded_file.name} from {original_count:,} to {len(df)} rows")
 
                         file_info.append({
                             'name': uploaded_file.name,
@@ -2444,6 +2459,7 @@ def load_data_tab(sf_conn):
                                             'year': year if year else None,
                                             'quarter': quarter if quarter else None,
                                             'month': month if month else None,
+                                            'debug_mode': debug_mode,  # Flag for debug uploads
                                         }
 
                                         print(f"Lambda event payload for {filename}:", lambda_payload)
