@@ -1705,22 +1705,11 @@ def upload_and_map_tab(sf_conn):
                 st.markdown("**Optional Columns**")
                 st.caption("💡 Start typing to search for a field")
 
-                # VERY VISIBLE DEBUG MESSAGE
-                st.info(f"🐛 DEBUG: You have {len(st.session_state.optional_columns)} optional columns loaded. Edit mode: {st.session_state.get('edit_mode', False)}")
-
                 # Clean up any section headers that might have snuck into optional_columns
                 st.session_state.optional_columns = [
                     col for col in st.session_state.optional_columns
                     if col not in SECTION_HEADERS
                 ]
-
-                # Debug: Show what's in optional_columns (for troubleshooting)
-                with st.expander("🔍 Debug Info (click to expand)", expanded=False):
-                    st.caption(f"**Edit mode:** {st.session_state.get('edit_mode', False)}")
-                    st.caption(f"**Current optional columns ({len(st.session_state.optional_columns)}):** {st.session_state.optional_columns}")
-                    st.caption(f"**Section headers:** {SECTION_HEADERS}")
-                    st.caption(f"**Total columns in OPTIONAL_COLUMNS_LIST:** {len(OPTIONAL_COLUMNS_LIST)}")
-                    st.caption(f"**Total actual columns (no headers):** {len([c for c in OPTIONAL_COLUMNS_LIST if c not in SECTION_HEADERS])}")
 
                 # Display existing optional columns
                 for idx, opt_col in enumerate(st.session_state.optional_columns):
