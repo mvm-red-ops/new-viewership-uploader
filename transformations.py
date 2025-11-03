@@ -457,6 +457,10 @@ def preview_transformation_step(value: Any, step_config: Dict) -> Any:
     if trans_type == 'split':
         # Special step: split returns a list
         delimiter = params.get('delimiter', ',')
+        # Handle list input (from previous split)
+        if isinstance(value, list):
+            # If value is already a list, convert to string first (join or just take first element)
+            value = str(value)
         if pd.isna(value) or value == '':
             return []
         return str(value).split(delimiter)

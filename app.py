@@ -125,12 +125,27 @@ def transformation_builder_modal(column_name, sample_data):
                     col1, col2 = st.columns([1, 2])
 
                     with col1:
+                        # Check if previous step resulted in an array/split
+                        prev_is_array = False
+                        if step_idx > 0:
+                            try:
+                                test_val = sample_data[0]
+                                for i in range(step_idx):
+                                    test_val = preview_transformation_step(test_val, steps[i])
+                                prev_is_array = isinstance(test_val, list)
+                            except:
+                                pass
+
                         step_type = st.selectbox(
                             "Operation",
                             options=["Split", "Extract Part", "Remove Prefix", "Trim (All Spaces)", "Trim (Ends Only)", "Clean Number", "Parse Time", "IF Condition"],
                             key=f"modal_step_type_{column_name}_{step_idx}",
                             index=["Split", "Extract Part", "Remove Prefix", "Trim (All Spaces)", "Trim (Ends Only)", "Clean Number", "Parse Time", "IF Condition"].index(step.get('ui_type', 'Split')) if step.get('ui_type') in ["Split", "Extract Part", "Remove Prefix", "Trim (All Spaces)", "Trim (Ends Only)", "Clean Number", "Parse Time", "IF Condition"] else 0
                         )
+
+                        # Show helpful hint if previous step was a split
+                        if prev_is_array and step_type not in ["Extract Part"]:
+                            st.info("💡 Previous step created an array. Use **Extract Part** to select which element you want!")
 
                     with col2:
                         # Show different inputs based on operation type
