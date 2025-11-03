@@ -135,13 +135,13 @@ def transformation_builder_modal(column_name, sample_data):
                     with col2:
                         # Show different inputs based on operation type
                         if step_type == "Split":
-                            # Use text_area to preserve exact spacing
-                            delimiter = st.text_area(
+                            # Use text_input for single character delimiters (most common)
+                            delimiter = st.text_input(
                                 "Delimiter (character(s) to split on)",
-                                value=step.get('params', {}).get('delimiter', '  '),
+                                value=step.get('params', {}).get('delimiter', ','),
                                 key=f"modal_delimiter_{column_name}_{step_idx}",
-                                height=50,
-                                help="Enter the exact character(s) to split on. Spaces count!"
+                                placeholder="e.g., - or , or |",
+                                help="Enter the character(s) to split on. Common: comma (,), hyphen (-), pipe (|), underscore (_)"
                             )
                             step['type'] = 'split'
                             step['params'] = {'delimiter': delimiter}
@@ -149,7 +149,8 @@ def transformation_builder_modal(column_name, sample_data):
 
                             # Show what delimiter actually is
                             if delimiter:
-                                st.caption(f"Delimiter: `{repr(delimiter)}` ({len(delimiter)} char{'s' if len(delimiter) != 1 else ''})")
+                                delimiter_display = delimiter.replace(' ', '␣')  # Show spaces clearly
+                                st.caption(f"Will split on: `{delimiter_display}` ({len(delimiter)} char{'s' if len(delimiter) != 1 else ''})")
                             else:
                                 st.warning("⚠️ Delimiter is empty!")
 
@@ -575,21 +576,44 @@ def transformation_builder_modal(column_name, sample_data):
                                     else:
                                         st.caption(f"  `{str(orig)[:40]}...` → `{result}`")
                         else:
-                            # Regular step preview
-                            preview_value = sample_data[0]
-                            for i in range(step_idx + 1):
-                                preview_value = preview_transformation_step(preview_value, steps[i])
+                            # Regular step preview - show multiple samples
+                            col_before, col_after = st.columns(2)
 
-                            if isinstance(preview_value, list):
-                                st.info(f"📋 Split into **{len(preview_value)} parts**: {preview_value}")
-                            else:
-                                st.success(f"✓ `{preview_value}`")
+                            with col_before:
+                                st.caption("**Before this step:**")
+                            with col_after:
+                                st.caption("**After this step:**")
+
+                            # Show preview for first 3 samples
+                            for sample_idx in range(min(3, len(sample_data))):
+                                preview_value = sample_data[sample_idx]
+
+                                # Apply all steps up to current one
+                                for i in range(step_idx + 1):
+                                    preview_value = preview_transformation_step(preview_value, steps[i])
+
+                                with col_before:
+                                    # Show value before this step
+                                    before_value = sample_data[sample_idx]
+                                    for i in range(step_idx):
+                                        before_value = preview_transformation_step(before_value, steps[i])
+                                    st.caption(f"  {sample_idx+1}. `{before_value}`")
+
+                                with col_after:
+                                    if isinstance(preview_value, list):
+                                        st.caption(f"  {sample_idx+1}. 📋 Split → {len(preview_value)} parts")
+                                        for idx, part in enumerate(preview_value[:3]):  # Show first 3 parts
+                                            st.caption(f"      [{idx}] `{part}`")
+                                        if len(preview_value) > 3:
+                                            st.caption(f"      ... and {len(preview_value) - 3} more")
+                                    else:
+                                        st.caption(f"  {sample_idx+1}. `{preview_value}`")
                     except Exception as e:
                         st.error(f"Error: {str(e)}")
 
         # Button to add new step
         if st.button("➕ Add Step", key=f"modal_add_step_{column_name}", use_container_width=True):
-            steps.append({'type': 'split', 'params': {'delimiter': '  '}, 'ui_type': 'Split'})
+            steps.append({'type': 'split', 'params': {'delimiter': ','}, 'ui_type': 'Split'})
             st.rerun()
 
         # Show final result for all samples
