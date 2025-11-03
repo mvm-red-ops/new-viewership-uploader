@@ -11,6 +11,7 @@ from snowflake_utils import SnowflakeConnection
 from column_mapper import ColumnMapper
 from config import load_aws_config, get_environment_name, get_config
 from transformations import apply_transformation, TRANSFORMATION_TEMPLATES, preview_transformation_step
+from wide_format_handler import detect_and_transform
 
 # Transformation Builder Modal
 @st.dialog("🔧 Transformation Builder", width="large")
@@ -732,6 +733,9 @@ REQUIRED_COLUMNS = [
     "Total Watch Time"
 ]
 
+# Columns that can be specified at load time instead of in template
+LOAD_TIME_COLUMNS = ["Channel", "Territory"]
+
 # Available optional columns organized by category
 AVAILABLE_OPTIONAL_COLUMNS = {
     "Metrics": [
@@ -836,13 +840,34 @@ def get_cached_platforms(_sf_conn):
 
 @st.cache_data(ttl=300)  # Cache for 5 minutes
 def get_cached_channels(_sf_conn):
-    """Get channels from Snowflake with caching"""
-    return _sf_conn.get_channels()
+    """Get channels - hardcoded list"""
+    return [
+        "Nosey",
+        "The Confess",
+        "Judge Faith",
+        "Presented by Nosey",
+        "VOD",
+        "Escandalos"
+    ]
 
 @st.cache_data(ttl=300)  # Cache for 5 minutes
 def get_cached_territories(_sf_conn):
-    """Get territories from Snowflake with caching"""
-    return _sf_conn.get_territories()
+    """Get territories - hardcoded list"""
+    return [
+        "United States",
+        "Canada",
+        "India",
+        "Mexico",
+        "Australia",
+        "New Zealand",
+        "International",
+        "Brazil"
+    ]
+
+@st.cache_data(ttl=300)  # Cache for 5 minutes
+def get_cached_partners(_sf_conn):
+    """Get partners from dictionary.public.partners table"""
+    return _sf_conn.get_partners()
 
 def validate_connection(sf_conn):
     """
@@ -956,7 +981,16 @@ def upload_and_map_tab(sf_conn):
             # Fallback to text input if query fails
             platform = st.text_input("Platform *", help="Required. e.g., YouTube, Netflix, Amazon Prime")
 
-        partner = st.text_input("Partner (optional)", help="Leave blank for a platform-wide template, or specify partner for specific mapping")
+        # Partner dropdown (optional)
+        partners = get_cached_partners(sf_conn)
+        if partners:
+            partner = st.selectbox(
+                "Partner (optional)",
+                options=[""] + partners,
+                help="Optional. Select a partner from the list or leave blank for platform-wide template"
+            )
+        else:
+            partner = st.text_input("Partner (optional)", help="Optional. Enter partner name or leave blank for platform-wide template")
 
         # Channel dropdown (optional)
         channels = get_cached_channels(sf_conn)
@@ -1016,10 +1050,33 @@ def upload_and_map_tab(sf_conn):
             # Read and store the dataframe in session state
             if uploaded_file is not None:
                 try:
+                    # Read file - try to detect if it's a wide format with multi-row header
                     if uploaded_file.name.endswith('.csv'):
+                        # First, peek at the file to check structure
+                        uploaded_file.seek(0)
+                        first_lines = uploaded_file.read(500).decode('utf-8', errors='ignore')
+                        uploaded_file.seek(0)
+
+                        # Count how many date patterns appear in first line
+                        import re
+                        first_line = first_lines.split('\n')[0]
+                        date_pattern = re.compile(r'\d{4}-\d{2}-\d{2}')
+                        date_count = len(date_pattern.findall(first_line))
+
+                        # If many dates in first line, likely wide format with multi-row header
+                        # Read with first row as header
                         df = pd.read_csv(uploaded_file)
                     else:
                         df = pd.read_excel(uploaded_file)
+
+                    # Detect and transform wide format (dates as columns) to long format (dates as rows)
+                    df, was_transformed, filtered_count = detect_and_transform(df)
+
+                    if was_transformed:
+                        st.success("✅ Wide format detected and transformed to long format! Dates unpivoted from columns to rows.")
+                        st.info(f"📊 Transformed {len(df)} records. You can now proceed with column mapping.")
+                        if filtered_count > 0:
+                            st.warning(f"⚠️ Filtered out {filtered_count} rows with no content identification (blank title/series). These records cannot be processed.")
 
                     st.session_state.df = df
                     st.session_state.filename = uploaded_file.name
@@ -1029,6 +1086,7 @@ def upload_and_map_tab(sf_conn):
                     st.session_state.territory = territory
                     st.session_state.domain = domain
                     st.session_state.data_type = data_type
+                    st.session_state.was_wide_format = was_transformed
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error reading file: {str(e)}")
@@ -1240,16 +1298,40 @@ def upload_and_map_tab(sf_conn):
 
                 # REQUIRED COLUMNS (with red asterisks)
                 for required_col in REQUIRED_COLUMNS:
-                    suggested = auto_mappings_all.get(required_col, "")
+                    # Use saved mappings if in edit mode, otherwise use auto-suggestions
+                    if st.session_state.edit_mode and st.session_state.existing_config:
+                        saved_mapping = auto_mappings.get(required_col, "")
+                        # Handle both old format (string) and new format (dict with source_column)
+                        if isinstance(saved_mapping, dict) and 'source_column' in saved_mapping:
+                            suggested = saved_mapping['source_column']
+                            # Restore transformation if it exists
+                            if 'transformation' in saved_mapping:
+                                transform_key = f"transform_config_{required_col}"
+                                applied_key = f"transform_applied_{required_col}"
+                                st.session_state[transform_key] = saved_mapping['transformation']
+                                st.session_state[applied_key] = True
+                        else:
+                            suggested = saved_mapping
+                    else:
+                        suggested = auto_mappings_all.get(required_col, "")
 
                     # Create dropdown with Custom first, then columns, then ❌ Not Mapped
                     options = ["✏️ Custom (enter manually)"] + df.columns.tolist() + ["❌ Not Mapped"]
                     default_idx = 0
-                    if suggested and suggested in df.columns.tolist():
-                        default_idx = options.index(suggested)
+                    if suggested:
+                        if suggested in df.columns.tolist():
+                            # Suggested column exists in data
+                            default_idx = options.index(suggested)
+                        elif suggested != "":
+                            # Suggested value is a custom/hardcoded value (not a column)
+                            default_idx = 0  # Select "Custom"
 
-                    # Show label with red asterisk using markdown
-                    st.markdown(f"**{required_col}** <span style='color: red; font-weight: bold;'>*</span>", unsafe_allow_html=True)
+                    # Show label with asterisk - red for truly required, blue for load-time optional
+                    if required_col in LOAD_TIME_COLUMNS:
+                        st.markdown(f"**{required_col}** <span style='color: #0066cc; font-weight: bold;'>*</span>", unsafe_allow_html=True)
+                        st.caption("💡 Can be left unmapped and specified at load time")
+                    else:
+                        st.markdown(f"**{required_col}** <span style='color: red; font-weight: bold;'>*</span>", unsafe_allow_html=True)
                     selected = st.selectbox(
                         required_col,
                         options,
@@ -1297,9 +1379,20 @@ def upload_and_map_tab(sf_conn):
                     if required_col == "Total Watch Time" and selected != "❌ Not Mapped":
                         if not transformation_config:  # Only show if no transformation applied
                             st.caption("Select unit:")
+
+                            # Get saved unit if in edit mode
+                            default_unit_idx = 0  # Default to "Hours"
+                            if st.session_state.edit_mode and st.session_state.existing_config:
+                                saved_mapping = auto_mappings.get(required_col, "")
+                                if isinstance(saved_mapping, dict) and 'unit' in saved_mapping:
+                                    saved_unit = saved_mapping['unit'].lower()
+                                    if saved_unit == 'minutes':
+                                        default_unit_idx = 1
+
                             unit = st.radio(
                                 "Unit",
                                 options=["Hours", "Minutes"],
+                                index=default_unit_idx,
                                 horizontal=True,
                                 key=f"unit_{required_col}",
                                 label_visibility="collapsed"
@@ -1307,8 +1400,14 @@ def upload_and_map_tab(sf_conn):
 
                     # If "Custom" is selected, show text input
                     if selected == "✏️ Custom (enter manually)":
+                        # Pre-fill with saved value if in edit mode and value is not a column
+                        default_custom_value = ""
+                        if suggested and suggested not in df.columns.tolist():
+                            default_custom_value = suggested
+
                         custom_value = st.text_input(
                             f"Enter custom value for {required_col}",
+                            value=default_custom_value,
                             key=f"custom_{required_col}",
                             placeholder="Type column name or expression",
                             label_visibility="collapsed"
@@ -1369,12 +1468,32 @@ def upload_and_map_tab(sf_conn):
                         # Extract base column name (remove category prefix) for mapping
                         base_col_name = current_label.split(" - ")[-1] if " - " in current_label else current_label
 
-                        # Try to get suggestion using base name
-                        opt_suggested = auto_mappings_all.get(base_col_name, "")
+                        # Try to get suggestion - use saved mappings if in edit mode
+                        if st.session_state.edit_mode and st.session_state.existing_config:
+                            saved_mapping = auto_mappings.get(base_col_name, "")
+                            # Handle both old format (string) and new format (dict with source_column)
+                            if isinstance(saved_mapping, dict) and 'source_column' in saved_mapping:
+                                opt_suggested = saved_mapping['source_column']
+                                # Restore transformation if it exists
+                                if 'transformation' in saved_mapping:
+                                    opt_transform_key = f"opt_transform_config_{idx}"
+                                    opt_applied_key = f"opt_transform_applied_{idx}"
+                                    st.session_state[opt_transform_key] = saved_mapping['transformation']
+                                    st.session_state[opt_applied_key] = True
+                            else:
+                                opt_suggested = saved_mapping
+                        else:
+                            opt_suggested = auto_mappings_all.get(base_col_name, "")
+
                         opt_options = ["✏️ Custom (enter manually)"] + df.columns.tolist() + ["❌ Not Mapped"]
                         opt_default_idx = 0
-                        if opt_suggested and opt_suggested in df.columns.tolist():
-                            opt_default_idx = opt_options.index(opt_suggested)
+                        if opt_suggested:
+                            if opt_suggested in df.columns.tolist():
+                                # Suggested column exists in data
+                                opt_default_idx = opt_options.index(opt_suggested)
+                            elif opt_suggested != "":
+                                # Suggested value is a custom/hardcoded value (not a column)
+                                opt_default_idx = 0  # Select "Custom"
 
                         opt_selected = st.selectbox(
                             "Source",
@@ -1419,8 +1538,14 @@ def upload_and_map_tab(sf_conn):
 
                         # If "Custom" is selected, show text input
                         if opt_selected == "✏️ Custom (enter manually)":
+                            # Pre-fill with saved value if in edit mode and value is not a column
+                            opt_default_custom_value = ""
+                            if opt_suggested and opt_suggested not in df.columns.tolist():
+                                opt_default_custom_value = opt_suggested
+
                             opt_custom_value = st.text_input(
                                 f"Enter custom value",
+                                value=opt_default_custom_value,
                                 key=f"opt_custom_{idx}",
                                 placeholder="Type column name",
                                 label_visibility="collapsed"
@@ -1598,7 +1723,14 @@ def search_and_edit_tab(sf_conn):
         with col1:
             search_platform = st.text_input("Platform")
         with col2:
-            search_partner = st.text_input("Partner")
+            partners = get_cached_partners(sf_conn)
+            if partners:
+                search_partner = st.selectbox(
+                    "Partner",
+                    options=[""] + partners
+                )
+            else:
+                search_partner = st.text_input("Partner")
         with col3:
             st.write("")  # Spacer
             st.write("")  # Spacer
@@ -1718,7 +1850,15 @@ def load_data_tab(sf_conn):
             platform = st.text_input("Platform *", help="Required. Enter the platform name")
 
         # Partner (optional)
-        partner = st.text_input("Partner (optional)", help="Optional. Enter partner name or leave blank for platform-wide template")
+        partners = get_cached_partners(sf_conn)
+        if partners:
+            partner = st.selectbox(
+                "Partner (optional)",
+                options=[""] + partners,
+                help="Optional. Select a partner from the list or leave blank for platform-wide template"
+            )
+        else:
+            partner = st.text_input("Partner (optional)", help="Optional. Enter partner name or leave blank for platform-wide template")
 
         # Channel dropdown (optional)
         channels = get_cached_channels(sf_conn)
@@ -1753,6 +1893,7 @@ def load_data_tab(sf_conn):
         quarter = st.selectbox(
             "Quarter *",
             options=["Q1", "Q2", "Q3", "Q4"],
+            index=2,  # Default to Q3
             help="Required. Select the quarter for this data"
         )
 
@@ -1848,6 +1989,14 @@ def load_data_tab(sf_conn):
                             df = pd.read_csv(uploaded_file)
                         else:
                             df = pd.read_excel(uploaded_file)
+
+                        # Detect and transform wide format (dates as columns) to long format (dates as rows)
+                        df, was_transformed, filtered_count = detect_and_transform(df)
+
+                        if was_transformed:
+                            st.info(f"📊 Wide format detected in {uploaded_file.name} - transformed to long format ({len(df)} records)")
+                            if filtered_count > 0:
+                                st.warning(f"⚠️ Filtered out {filtered_count} rows from {uploaded_file.name} with no content identification (blank title/series)")
 
                         file_info.append({
                             'name': uploaded_file.name,
@@ -2118,10 +2267,13 @@ def apply_column_mappings(df, column_mappings, platform, channel, territory, dom
 
             # Handle Total Watch Time with unit conversion
             if target_col == 'Total Watch Time':
+                # Convert to numeric, removing commas if present
+                numeric_data = pd.to_numeric(source_data.astype(str).str.replace(',', ''), errors='coerce')
+
                 if unit == 'minutes':
-                    transformed_data['TOT_MOV'] = source_data
+                    transformed_data['TOT_MOV'] = numeric_data
                 else:
-                    transformed_data['TOT_HOV'] = source_data
+                    transformed_data['TOT_HOV'] = numeric_data
             else:
                 # Check if this column has a special mapping
                 if target_col in column_name_mapping:
@@ -2143,8 +2295,20 @@ def apply_column_mappings(df, column_mappings, platform, channel, territory, dom
                     # No transformation, just store as usual
                     transformed_data[std_col_name] = source_data
         elif source_col and source_col != "":
-            # Column specified but not found in data
-            st.warning(f"Column '{source_col}' specified in mapping but not found in uploaded file")
+            # Column not found - check if this should be a hardcoded value
+            # For Channel, Partner, Territory: treat missing columns as hardcoded values
+            if target_col in ['Channel', 'Partner', 'Territory']:
+                # Use the value as a constant for all rows
+                if target_col in column_name_mapping:
+                    std_col_name = column_name_mapping[target_col]
+                else:
+                    std_col_name = target_col.upper().replace(' ', '_')
+
+                transformed_data[std_col_name] = source_col  # Use the "source_col" as constant value
+                st.info(f"ℹ️ Using hardcoded value for {target_col}: '{source_col}'")
+            else:
+                # For other columns, warn that column is missing
+                st.warning(f"Column '{source_col}' specified in mapping but not found in uploaded file")
 
     # Create dataframe from transformed data
     result_df = pd.DataFrame(transformed_data)

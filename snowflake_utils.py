@@ -419,6 +419,28 @@ class SnowflakeConnection:
             print(f"Warning: Could not fetch territories from dictionary.public.territories: {str(e)}")
             return []
 
+    def get_partners(self) -> List[str]:
+        """
+        Retrieve list of partners from dictionary.public.partners
+
+        Returns:
+            List of partner names
+        """
+        select_sql = """
+        SELECT name
+        FROM dictionary.public.partners
+        WHERE active = true
+        ORDER BY name ASC
+        """
+
+        try:
+            self.cursor.execute(select_sql)
+            rows = self.cursor.fetchall()
+            return [row[0] for row in rows if row[0]]
+        except Exception as e:
+            print(f"Warning: Could not fetch partners from dictionary.public.partners: {str(e)}")
+            return []
+
     def check_duplicate_config(self, platform: str, partner: str, channel: Optional[str] = None, territory: Optional[str] = None) -> Optional[Dict]:
         """
         Check if exact configuration already exists (matches UNIQUE constraint)
