@@ -676,8 +676,13 @@ def transformation_builder_modal(column_name, sample_data, full_data=None):
     # Profile Data button (if we have steps configured)
     if steps and transformation_config:
         if st.button("🔍 Profile Data", use_container_width=True, help="Analyze transformation across all data to detect issues"):
+            # Close transformation builder modal
+            st.session_state[f"modal_open_{column_name}"] = False
+            # Open profile modal
             st.session_state[f"profile_modal_open_{column_name}"] = True
             st.session_state[f"profile_transformation_{column_name}"] = transformation_config
+            # Store the steps for the profile modal
+            st.session_state[f"profile_steps_{column_name}"] = steps
             st.rerun()
 
     col1, col2 = st.columns(2)
@@ -1550,8 +1555,8 @@ def upload_and_map_tab(sf_conn):
                         if st.session_state.get(f"profile_modal_open_{required_col}", False):
                             full_data = st.session_state.get(f"full_data_for_profile_{required_col}", df[selected].tolist())
                             transformation_config = st.session_state.get(f"profile_transformation_{required_col}")
-                            # Get steps from the transformation config
-                            steps = transformation_config.get('steps', []) if transformation_config.get('type') == 'chain' else [transformation_config]
+                            # Get steps from session state
+                            steps = st.session_state.get(f"profile_steps_{required_col}", [])
                             profile_data_modal(required_col, transformation_config, full_data, steps)
 
                         with col_status:
@@ -1723,8 +1728,8 @@ def upload_and_map_tab(sf_conn):
                             if st.session_state.get(f"profile_modal_open_{opt_column_key}", False):
                                 opt_full_data = st.session_state.get(f"full_data_for_profile_{opt_column_key}", df[opt_selected].tolist())
                                 opt_transformation_config = st.session_state.get(f"profile_transformation_{opt_column_key}")
-                                # Get steps from the transformation config
-                                opt_steps = opt_transformation_config.get('steps', []) if opt_transformation_config.get('type') == 'chain' else [opt_transformation_config]
+                                # Get steps from session state
+                                opt_steps = st.session_state.get(f"profile_steps_{opt_column_key}", [])
                                 profile_data_modal(opt_column_key, opt_transformation_config, opt_full_data, opt_steps)
 
                             with col_status2:
