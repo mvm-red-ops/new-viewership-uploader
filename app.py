@@ -1526,10 +1526,10 @@ def upload_and_map_tab(sf_conn):
                 # Load existing mappings if in edit mode
                 if st.session_state.edit_mode and st.session_state.existing_config:
                     auto_mappings = st.session_state.existing_config['COLUMN_MAPPINGS']
-                    # Separate required from optional columns
+                    # Separate required from optional columns (exclude section headers)
                     st.session_state.optional_columns = [
                         col for col in auto_mappings.keys()
-                        if col not in REQUIRED_COLUMNS
+                        if col not in REQUIRED_COLUMNS and col not in SECTION_HEADERS
                     ]
                 else:
                     auto_mappings = mapper.suggest_mappings()
@@ -1840,9 +1840,9 @@ def upload_and_map_tab(sf_conn):
                 col_add, col_spacer = st.columns([1, 2])
                 with col_add:
                     if st.button("➕ Add Optional Column", use_container_width=True):
-                        # Add the first available column that hasn't been added yet
+                        # Add the first available column that hasn't been added yet (skip section headers)
                         for col in OPTIONAL_COLUMNS_LIST:
-                            if col not in st.session_state.optional_columns:
+                            if col not in st.session_state.optional_columns and col not in SECTION_HEADERS:
                                 st.session_state.optional_columns.append(col)
                                 break
                         st.rerun()
