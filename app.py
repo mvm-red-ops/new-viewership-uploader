@@ -1699,6 +1699,12 @@ def upload_and_map_tab(sf_conn):
                 st.markdown("**Optional Columns**")
                 st.caption("💡 Start typing to search for a field")
 
+                # Clean up any section headers that might have snuck into optional_columns
+                st.session_state.optional_columns = [
+                    col for col in st.session_state.optional_columns
+                    if col not in SECTION_HEADERS
+                ]
+
                 # Display existing optional columns
                 for idx, opt_col in enumerate(st.session_state.optional_columns):
                     # Get current column index in the list, or use current value
@@ -1716,9 +1722,12 @@ def upload_and_map_tab(sf_conn):
                             key=f"opt_label_{idx}",
                             label_visibility="collapsed"
                         )
-                        # Update the label in session state if changed
-                        if updated_label != opt_col:
+                        # Update the label in session state if changed (but never allow section headers)
+                        if updated_label != opt_col and updated_label not in SECTION_HEADERS:
                             st.session_state.optional_columns[idx] = updated_label
+                        elif updated_label in SECTION_HEADERS:
+                            # If user somehow selected a section header, keep the old value
+                            updated_label = opt_col
 
                     # Use updated label if changed
                     current_label = updated_label
@@ -1839,13 +1848,18 @@ def upload_and_map_tab(sf_conn):
                 # Add new optional column button
                 col_add, col_spacer = st.columns([1, 2])
                 with col_add:
-                    if st.button("➕ Add Optional Column", use_container_width=True):
+                    # Count how many columns are available to add
+                    available_cols = [
+                        col for col in OPTIONAL_COLUMNS_LIST
+                        if col not in st.session_state.optional_columns and col not in SECTION_HEADERS
+                    ]
+
+                    button_label = f"➕ Add Optional Column ({len(available_cols)} available)"
+                    if st.button(button_label, use_container_width=True, disabled=(len(available_cols) == 0)):
                         # Add the first available column that hasn't been added yet (skip section headers)
-                        for col in OPTIONAL_COLUMNS_LIST:
-                            if col not in st.session_state.optional_columns and col not in SECTION_HEADERS:
-                                st.session_state.optional_columns.append(col)
-                                break
-                        st.rerun()
+                        if available_cols:
+                            st.session_state.optional_columns.append(available_cols[0])
+                            st.rerun()
 
             # Save configuration
             st.subheader("Save Configuration")
