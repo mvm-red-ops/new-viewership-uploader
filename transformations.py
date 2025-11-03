@@ -672,5 +672,19 @@ TRANSFORMATION_TEMPLATES = {
             'delimiter': '-',
             'index': 0
         }
+    },
+    "Extract Territory (split on '-', take second)": {
+        'type': 'split_extract',
+        'params': {
+            'delimiter': '-',
+            'index': 1
+        }
+    },
+    "Extract Device/Type (split on '-', take third)": {
+        'type': 'split_extract',
+        'params': {
+            'delimiter': '-',
+            'index': 2
+        }
     }
 }
