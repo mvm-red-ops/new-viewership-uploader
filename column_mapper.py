@@ -128,7 +128,9 @@ class ColumnMapper:
             "YEAR": [r"^year$", r"yr"],
             # Optional Monetary columns
             "CHANNEL_ADPOOL_REVENUE": [r"channel.?adpool.?revenue", r"adpool.?revenue"],
-            "REVENUE": [r"revenue", r"rev"]
+            "REVENUE": [r"revenue", r"rev"],
+            # Optional Completion metrics
+            "TOT_COMPLETIONS": [r"tot.?completion", r"total.?completion", r"completions?"]
         }
 
     def suggest_mappings(self) -> Dict[str, str]:
