@@ -1060,6 +1060,8 @@ def init_session_state():
         st.session_state.config_id = None
     if 'optional_columns' not in st.session_state:
         st.session_state.optional_columns = []
+    if 'optional_columns_loaded_from_config' not in st.session_state:
+        st.session_state.optional_columns_loaded_from_config = False
     if 'active_tab' not in st.session_state:
         st.session_state.active_tab = 0
 
@@ -1407,6 +1409,7 @@ def upload_and_map_tab(sf_conn):
                     st.session_state.config_id = None
                     st.session_state.existing_config = None
                     st.session_state.optional_columns = []
+                    st.session_state.optional_columns_loaded_from_config = False
                     st.rerun()
 
             # Show editable metadata fields when file is uploaded
@@ -1526,11 +1529,14 @@ def upload_and_map_tab(sf_conn):
                 # Load existing mappings if in edit mode
                 if st.session_state.edit_mode and st.session_state.existing_config:
                     auto_mappings = st.session_state.existing_config['COLUMN_MAPPINGS']
-                    # Separate required from optional columns (exclude section headers)
-                    st.session_state.optional_columns = [
-                        col for col in auto_mappings.keys()
-                        if col not in REQUIRED_COLUMNS and col not in SECTION_HEADERS
-                    ]
+                    # Only load optional columns from config ONCE (not on every rerun)
+                    # This allows users to add/remove columns while editing
+                    if 'optional_columns_loaded_from_config' not in st.session_state or not st.session_state.optional_columns_loaded_from_config:
+                        st.session_state.optional_columns = [
+                            col for col in auto_mappings.keys()
+                            if col not in REQUIRED_COLUMNS and col not in SECTION_HEADERS
+                        ]
+                        st.session_state.optional_columns_loaded_from_config = True
                 else:
                     auto_mappings = mapper.suggest_mappings()
 
@@ -1913,6 +1919,7 @@ def upload_and_map_tab(sf_conn):
                                 st.session_state.config_id = None
                                 st.session_state.existing_config = None
                                 st.session_state.optional_columns = []
+                                st.session_state.optional_columns_loaded_from_config = False
                                 st.session_state.df = None
                                 st.session_state.filename = None
                                 st.session_state.platform = None
@@ -1946,6 +1953,7 @@ def upload_and_map_tab(sf_conn):
                                             st.session_state.config_id = None
                                             st.session_state.existing_config = None
                                             st.session_state.optional_columns = []
+                                            st.session_state.optional_columns_loaded_from_config = False
                                             st.session_state.df = None
                                             st.session_state.filename = None
                                             st.session_state.platform = None
@@ -1969,6 +1977,7 @@ def upload_and_map_tab(sf_conn):
                                     st.session_state.config_id = None
                                     st.session_state.existing_config = None
                                     st.session_state.optional_columns = []
+                                    st.session_state.optional_columns_loaded_from_config = False
                                     st.session_state.df = None
                                     st.session_state.filename = None
                                     st.session_state.platform = None
@@ -1987,6 +1996,7 @@ def upload_and_map_tab(sf_conn):
                         st.session_state.config_id = None
                         st.session_state.existing_config = None
                         st.session_state.optional_columns = []
+                        st.session_state.optional_columns_loaded_from_config = False
                         st.session_state.df = None
                         st.session_state.filename = None
                         st.session_state.platform = None
