@@ -965,7 +965,7 @@ try {
     function logStep(message, status, rowsAffected = "0", errorMessage = "") {
         const executionTime = (new Date() - startTime) / 1000;
         const logSql = `
-        INSERT INTO UPLOAD_DB.PUBLIC.ERROR_LOG_TABLE (
+        INSERT INTO {{UPLOAD_DB}}.PUBLIC.ERROR_LOG_TABLE (
             LOG_TIME,
             LOG_MESSAGE,
             PROCEDURE_NAME,
@@ -1035,7 +1035,7 @@ try {
     // Drop unmatched records table if it exists from previous runs
     try {
         snowflake.execute({
-            sqlText: `DROP TABLE IF EXISTS UPLOAD_DB.PUBLIC.TEMP_${platformArg.toUpperCase()}_UNMATCHED`
+            sqlText: `DROP TABLE IF EXISTS {{UPLOAD_DB}}.PUBLIC.TEMP_${platformArg.toUpperCase()}_UNMATCHED`
         });
         logStep("Dropped previous unmatched records table if it existed", "INFO");
     } catch (err) {
@@ -1143,7 +1143,7 @@ try {
 
     // First, manually create the unmatched records table with all records
     const createUnmatchedSql = `
-    CREATE OR REPLACE TABLE UPLOAD_DB.PUBLIC.TEMP_${platformArg.toUpperCase()}_UNMATCHED AS
+    CREATE OR REPLACE TABLE {{UPLOAD_DB}}.PUBLIC.TEMP_${platformArg.toUpperCase()}_UNMATCHED AS
     SELECT DISTINCT id
     FROM {{STAGING_DB}}.public.platform_viewership
     WHERE ${baseConditions}
@@ -1154,7 +1154,7 @@ try {
     // Check the initial count of records in the unmatched table
     const initialCountSql = `
     SELECT COUNT(*) AS INITIAL_COUNT
-    FROM UPLOAD_DB.PUBLIC.TEMP_${platformArg.toUpperCase()}_UNMATCHED`;
+    FROM {{UPLOAD_DB}}.PUBLIC.TEMP_${platformArg.toUpperCase()}_UNMATCHED`;
 
     const initialCountResult = snowflake.execute({sqlText: initialCountSql});
     let initialCount = 0;
@@ -1169,7 +1169,7 @@ try {
         // Check how many unmatched records we have left
         const checkUnmatchedSql = `
         SELECT COUNT(*) AS UNMATCHED_COUNT
-        FROM UPLOAD_DB.PUBLIC.TEMP_${platformArg.toUpperCase()}_UNMATCHED`;
+        FROM {{UPLOAD_DB}}.PUBLIC.TEMP_${platformArg.toUpperCase()}_UNMATCHED`;
 
         const unmatchedResult = snowflake.execute({sqlText: checkUnmatchedSql});
         let unmatchedCount = 0;
@@ -1191,9 +1191,9 @@ try {
         let createBucketSql;
         if (bucketType === "FULL_DATA") {
             createBucketSql = `
-            CREATE OR REPLACE TEMPORARY TABLE UPLOAD_DB.PUBLIC.${bucketTableName} AS
+            CREATE OR REPLACE TEMPORARY TABLE {{UPLOAD_DB}}.PUBLIC.${bucketTableName} AS
             SELECT u.id
-            FROM UPLOAD_DB.PUBLIC.TEMP_${platformArg.toUpperCase()}_UNMATCHED u
+            FROM {{UPLOAD_DB}}.PUBLIC.TEMP_${platformArg.toUpperCase()}_UNMATCHED u
             JOIN {{STAGING_DB}}.public.platform_viewership v ON u.id = v.id
             WHERE v.platform = '${platformArg}'
             AND v.ref_id IS NOT NULL AND TRIM(v.ref_id) != ''
@@ -1205,9 +1205,9 @@ try {
             `;
         } else if (bucketType === "REF_ID_SERIES") {
             createBucketSql = `
-            CREATE OR REPLACE TEMPORARY TABLE UPLOAD_DB.PUBLIC.${bucketTableName} AS
+            CREATE OR REPLACE TEMPORARY TABLE {{UPLOAD_DB}}.PUBLIC.${bucketTableName} AS
             SELECT u.id
-            FROM UPLOAD_DB.PUBLIC.TEMP_${platformArg.toUpperCase()}_UNMATCHED u
+            FROM {{UPLOAD_DB}}.PUBLIC.TEMP_${platformArg.toUpperCase()}_UNMATCHED u
             JOIN {{STAGING_DB}}.public.platform_viewership v ON u.id = v.id
             WHERE v.platform = '${platformArg}'
             AND v.ref_id IS NOT NULL AND TRIM(v.ref_id) != ''
@@ -1215,9 +1215,9 @@ try {
             `;
         } else if (bucketType === "REF_ID_ONLY") {
             createBucketSql = `
-            CREATE OR REPLACE TEMPORARY TABLE UPLOAD_DB.PUBLIC.${bucketTableName} AS
+            CREATE OR REPLACE TEMPORARY TABLE {{UPLOAD_DB}}.PUBLIC.${bucketTableName} AS
             SELECT u.id
-            FROM UPLOAD_DB.PUBLIC.TEMP_${platformArg.toUpperCase()}_UNMATCHED u
+            FROM {{UPLOAD_DB}}.PUBLIC.TEMP_${platformArg.toUpperCase()}_UNMATCHED u
             JOIN {{STAGING_DB}}.public.platform_viewership v ON u.id = v.id
             WHERE v.platform = '${platformArg}'
             AND v.ref_id IS NOT NULL AND TRIM(v.ref_id) != ''
@@ -1225,9 +1225,9 @@ try {
             `;
         } else if (bucketType === "SERIES_SEASON_EPISODE") {
             createBucketSql = `
-            CREATE OR REPLACE TEMPORARY TABLE UPLOAD_DB.PUBLIC.${bucketTableName} AS
+            CREATE OR REPLACE TEMPORARY TABLE {{UPLOAD_DB}}.PUBLIC.${bucketTableName} AS
             SELECT u.id
-            FROM UPLOAD_DB.PUBLIC.TEMP_${platformArg.toUpperCase()}_UNMATCHED u
+            FROM {{UPLOAD_DB}}.PUBLIC.TEMP_${platformArg.toUpperCase()}_UNMATCHED u
             JOIN {{STAGING_DB}}.public.platform_viewership v ON u.id = v.id
             WHERE v.platform = '${platformArg}'
             AND v.internal_series IS NOT NULL AND TRIM(v.internal_series) != ''
@@ -1238,9 +1238,9 @@ try {
             `;
         } else if (bucketType === "SERIES_ONLY") {
             createBucketSql = `
-            CREATE OR REPLACE TEMPORARY TABLE UPLOAD_DB.PUBLIC.${bucketTableName} AS
+            CREATE OR REPLACE TEMPORARY TABLE {{UPLOAD_DB}}.PUBLIC.${bucketTableName} AS
             SELECT u.id
-            FROM UPLOAD_DB.PUBLIC.TEMP_${platformArg.toUpperCase()}_UNMATCHED u
+            FROM {{UPLOAD_DB}}.PUBLIC.TEMP_${platformArg.toUpperCase()}_UNMATCHED u
             JOIN {{STAGING_DB}}.public.platform_viewership v ON u.id = v.id
             WHERE v.platform = '${platformArg}'
             AND (v.ref_id IS NULL OR TRIM(v.ref_id) = '')
@@ -1251,9 +1251,9 @@ try {
         }
         else if (bucketType === "TITLE_ONLY") {
             createBucketSql = `
-            CREATE OR REPLACE TEMPORARY TABLE UPLOAD_DB.PUBLIC.${bucketTableName} AS
+            CREATE OR REPLACE TEMPORARY TABLE {{UPLOAD_DB}}.PUBLIC.${bucketTableName} AS
             SELECT u.id
-            FROM UPLOAD_DB.PUBLIC.TEMP_${platformArg.toUpperCase()}_UNMATCHED u
+            FROM {{UPLOAD_DB}}.PUBLIC.TEMP_${platformArg.toUpperCase()}_UNMATCHED u
             JOIN {{STAGING_DB}}.public.platform_viewership v ON u.id = v.id
             WHERE v.platform = '${platformArg}'
             AND v.platform_content_name IS NOT NULL AND TRIM(v.platform_content_name) != ''
@@ -1264,7 +1264,7 @@ try {
         snowflake.execute({sqlText: createBucketSql});
 
         // Count the actual records in the bucket
-        const countActualSql = `SELECT COUNT(*) AS ACTUAL_COUNT FROM UPLOAD_DB.PUBLIC.${bucketTableName}`;
+        const countActualSql = `SELECT COUNT(*) AS ACTUAL_COUNT FROM {{UPLOAD_DB}}.PUBLIC.${bucketTableName}`;
         const actualCountResult = snowflake.execute({sqlText: countActualSql});
         let actualCount = 0;
         if (actualCountResult.next()) {
@@ -1305,7 +1305,7 @@ try {
 
             // Update the unmatched records table to remove any we just matched
             const updateUnmatchedSql = `
-            DELETE FROM UPLOAD_DB.PUBLIC.TEMP_${platformArg.toUpperCase()}_UNMATCHED u
+            DELETE FROM {{UPLOAD_DB}}.PUBLIC.TEMP_${platformArg.toUpperCase()}_UNMATCHED u
             WHERE EXISTS (
                 SELECT 1
                 FROM {{STAGING_DB}}.public.platform_viewership v
@@ -1319,7 +1319,7 @@ try {
             // Count how many records remain in the unmatched table
             const remainingUnmatchedSql = `
             SELECT COUNT(*) AS REMAINING_UNMATCHED
-            FROM UPLOAD_DB.PUBLIC.TEMP_${platformArg.toUpperCase()}_UNMATCHED`;
+            FROM {{UPLOAD_DB}}.PUBLIC.TEMP_${platformArg.toUpperCase()}_UNMATCHED`;
 
             const remainingResult = snowflake.execute({sqlText: remainingUnmatchedSql});
             let remainingCount = 0;
@@ -1334,13 +1334,13 @@ try {
         }
 
         // Clean up this bucket
-        snowflake.execute({sqlText: `DROP TABLE IF EXISTS UPLOAD_DB.PUBLIC.${bucketTableName}`});
+        snowflake.execute({sqlText: `DROP TABLE IF EXISTS {{UPLOAD_DB}}.PUBLIC.${bucketTableName}`});
     }
 
     // Clean up all temporary bucket tables
     for (const bucketType of bucketOrder) {
         try {
-            snowflake.execute({sqlText: `DROP TABLE IF EXISTS UPLOAD_DB.PUBLIC.TEMP_${platformArg.toUpperCase()}_${bucketType}_BUCKET`});
+            snowflake.execute({sqlText: `DROP TABLE IF EXISTS {{UPLOAD_DB}}.PUBLIC.TEMP_${platformArg.toUpperCase()}_${bucketType}_BUCKET`});
         } catch (err) {
             logStep(`Warning: Failed to drop temporary table for ${bucketType}`, "WARNING", "0", err.toString());
         }
@@ -1354,7 +1354,7 @@ try {
     try {
         const finalUnmatchedSql = `
         SELECT COUNT(*) AS FINAL_UNMATCHED
-        FROM UPLOAD_DB.PUBLIC.TEMP_${platformArg.toUpperCase()}_UNMATCHED`;
+        FROM {{UPLOAD_DB}}.PUBLIC.TEMP_${platformArg.toUpperCase()}_UNMATCHED`;
 
         const finalResult = snowflake.execute({sqlText: finalUnmatchedSql});
         let finalUnmatchedCount = 0;
@@ -1367,7 +1367,7 @@ try {
         }
 
         // Clean up the unmatched records table
-        snowflake.execute({sqlText: `DROP TABLE IF EXISTS UPLOAD_DB.PUBLIC.TEMP_${platformArg.toUpperCase()}_UNMATCHED`});
+        snowflake.execute({sqlText: `DROP TABLE IF EXISTS {{UPLOAD_DB}}.PUBLIC.TEMP_${platformArg.toUpperCase()}_UNMATCHED`});
         logStep("Dropped unmatched records table", "INFO");
     } catch (err) {
         logStep(`Warning: Failed to finalize unmatched records: ${err.toString()}`, "WARNING", "0", err.toString());

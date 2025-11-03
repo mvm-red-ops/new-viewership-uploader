@@ -114,7 +114,7 @@ try {
             {{UPLOAD_DB}}.public.extract_primary_title(s.titles) as asset_series
         FROM
             {{STAGING_DB}}.public.platform_viewership v
-        JOIN UPLOAD_DB.PUBLIC.TEMP_${platformArg}_${bucketName}_BUCKET b ON (v.id = b.id)
+        JOIN {{UPLOAD_DB}}.PUBLIC.TEMP_${platformArg}_${bucketName}_BUCKET b ON (v.id = b.id)
         JOIN {{METADATA_DB}}.public.episode e ON (
             v.ref_id = e.ref_id
             AND CAST(e.episode AS VARCHAR) = v.episode_number
@@ -155,7 +155,7 @@ try {
         FROM {{STAGING_DB}}.public.platform_viewership
         WHERE platform = '${platformArg}'
           AND id IN (
-            SELECT id FROM UPLOAD_DB.PUBLIC.TEMP_${platformArg.toUpperCase()}_${bucketName}_BUCKET
+            SELECT id FROM {{UPLOAD_DB}}.PUBLIC.TEMP_${platformArg.toUpperCase()}_${bucketName}_BUCKET
         )
         `;
         snowflake.execute({sqlText: createMarkerSql});
@@ -175,7 +175,7 @@ try {
         const countPotentialUnmatched = `
         SELECT COUNT(*) AS POTENTIAL_UNMATCHED
         FROM {{STAGING_DB}}.public.platform_viewership v
-        JOIN UPLOAD_DB.PUBLIC.TEMP_${platformArg.toUpperCase()}_${bucketName}_BUCKET b ON v.id = b.id
+        JOIN {{UPLOAD_DB}}.PUBLIC.TEMP_${platformArg.toUpperCase()}_${bucketName}_BUCKET b ON v.id = b.id
         WHERE v.platform = '${platformArg}'
           AND v.content_provider IS NULL
           AND v.processed IS NULL;
@@ -330,7 +330,7 @@ try {
             {{UPLOAD_DB}}.public.extract_primary_title(s.titles) AS asset_series
         FROM
             {{STAGING_DB}}.public.platform_viewership v
-        JOIN UPLOAD_DB.PUBLIC.TEMP_${platformArg}_${bucketName}_BUCKET b ON (v.id = b.id)
+        JOIN {{UPLOAD_DB}}.PUBLIC.TEMP_${platformArg}_${bucketName}_BUCKET b ON (v.id = b.id)
         JOIN {{METADATA_DB}}.public.episode e ON (v.ref_id = e.ref_id)
         JOIN {{METADATA_DB}}.public.series s ON (s.id = e.series_id)
         JOIN {{METADATA_DB}}.public.metadata m ON (
@@ -507,7 +507,7 @@ try {
             {{UPLOAD_DB}}.public.extract_primary_title(s.titles) AS asset_series
         FROM
             {{STAGING_DB}}.public.platform_viewership v
-        JOIN UPLOAD_DB.PUBLIC.TEMP_${platformArg}_${bucketName}_BUCKET b ON (v.id = b.id)
+        JOIN {{UPLOAD_DB}}.PUBLIC.TEMP_${platformArg}_${bucketName}_BUCKET b ON (v.id = b.id)
         JOIN {{METADATA_DB}}.public.episode e ON (v.ref_id = e.ref_id)
         JOIN {{METADATA_DB}}.public.series s ON (s.id = e.series_id)
         JOIN {{METADATA_DB}}.public.metadata m ON (
@@ -689,7 +689,7 @@ try {
             {{UPLOAD_DB}}.public.extract_primary_title(s.titles) AS asset_series
         FROM
             {{STAGING_DB}}.public.platform_viewership v
-        JOIN UPLOAD_DB.PUBLIC.TEMP_${platformArg}_${bucketName}_BUCKET b ON (v.id = b.id)
+        JOIN {{UPLOAD_DB}}.PUBLIC.TEMP_${platformArg}_${bucketName}_BUCKET b ON (v.id = b.id)
         JOIN {{METADATA_DB}}.public.series s ON (
             LOWER({{UPLOAD_DB}}.public.extract_primary_title(s.titles)) = LOWER(v.internal_series)
         )
@@ -873,7 +873,7 @@ try {
             {{UPLOAD_DB}}.public.extract_primary_title(s.titles) as asset_series
         FROM
             {{STAGING_DB}}.public.platform_viewership v
-        JOIN UPLOAD_DB.PUBLIC.TEMP_${platformArg}_${bucketName}_BUCKET b ON (v.id = b.id)
+        JOIN {{UPLOAD_DB}}.PUBLIC.TEMP_${platformArg}_${bucketName}_BUCKET b ON (v.id = b.id)
         JOIN {{METADATA_DB}}.public.series s ON ({{UPLOAD_DB}}.public.extract_primary_title(s.titles) = v.internal_series)
         JOIN {{METADATA_DB}}.public.episode e ON (s.id = e.series_id )
         JOIN {{METADATA_DB}}.public.metadata m ON (m.ref_id = e.ref_id)
@@ -908,7 +908,7 @@ try {
         FROM {{STAGING_DB}}.public.platform_viewership
         WHERE platform = '${platformArg}'
           AND id IN (
-            SELECT id FROM UPLOAD_DB.PUBLIC.TEMP_${platformArg.toUpperCase()}_${bucketName}_BUCKET
+            SELECT id FROM {{UPLOAD_DB}}.PUBLIC.TEMP_${platformArg.toUpperCase()}_${bucketName}_BUCKET
         )
         `;
         snowflake.execute({sqlText: createMarkerSql});
@@ -941,7 +941,7 @@ try {
                     m.ref_id as ref_id
                 FROM
                     {{STAGING_DB}}.public.platform_viewership v
-                JOIN UPLOAD_DB.PUBLIC.TEMP_${platformArg.toUpperCase()}_${bucketName}_BUCKET b ON (v.id = b.id)
+                JOIN {{UPLOAD_DB}}.PUBLIC.TEMP_${platformArg.toUpperCase()}_${bucketName}_BUCKET b ON (v.id = b.id)
                 JOIN {{METADATA_DB}}.public.metadata m ON (
                     LOWER(REGEXP_REPLACE(TRIM(m.title),  '[^A-Za-z0-9]', '')) =
                     LOWER(REGEXP_REPLACE(TRIM(v.platform_content_name),  '[^A-Za-z0-9]', ''))
@@ -983,7 +983,7 @@ try {
         const countPotentialUnmatched = `
         SELECT COUNT(*) AS POTENTIAL_UNMATCHED
         FROM {{STAGING_DB}}.public.platform_viewership v
-        JOIN UPLOAD_DB.PUBLIC.TEMP_${platformArg.toUpperCase()}_${bucketName}_BUCKET b ON v.id = b.id
+        JOIN {{UPLOAD_DB}}.PUBLIC.TEMP_${platformArg.toUpperCase()}_${bucketName}_BUCKET b ON v.id = b.id
         WHERE v.platform = '${platformArg}'
           AND v.content_provider IS NULL
           AND v.processed IS NULL;
@@ -1124,7 +1124,7 @@ try {
             {{UPLOAD_DB}}.public.extract_primary_title(s.titles) AS asset_series
         FROM
             {{STAGING_DB}}.public.platform_viewership v
-        JOIN UPLOAD_DB.PUBLIC.TEMP_${platformArg}_${bucketName}_BUCKET b ON (v.id = b.id)
+        JOIN {{UPLOAD_DB}}.PUBLIC.TEMP_${platformArg}_${bucketName}_BUCKET b ON (v.id = b.id)
         JOIN {{METADATA_DB}}.public.metadata m ON (
             LOWER(REGEXP_REPLACE(TRIM(m.title),  '[^A-Za-z0-9]', '')) =
             LOWER(REGEXP_REPLACE(TRIM(v.platform_content_name),  '[^A-Za-z0-9]', ''))
