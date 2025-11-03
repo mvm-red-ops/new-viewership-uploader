@@ -68,7 +68,7 @@ try {
     function logStep(message, status, rowsAffected = "0", errorMessage = "") {
         const executionTime = (new Date() - startTime) / 1000; // Time in seconds
         const logSql = `
-        INSERT INTO UPLOAD_DB.PUBLIC.ERROR_LOG_TABLE (
+        INSERT INTO {{UPLOAD_DB}}.PUBLIC.ERROR_LOG_TABLE (
             LOG_TIME,
             LOG_MESSAGE,
             PROCEDURE_NAME,
@@ -145,7 +145,7 @@ try {
     try {
         // First create a temporary table to mark records before update
         const createMarkerSql = `
-        CREATE OR REPLACE TEMPORARY TABLE UPLOAD_DB.PUBLIC.${platformArg.toUpperCase()}_UPDATE_MARKER AS
+        CREATE OR REPLACE TEMPORARY TABLE {{UPLOAD_DB}}.PUBLIC.${platformArg.toUpperCase()}_UPDATE_MARKER AS
         SELECT
             id,
             content_provider IS NOT NULL AS had_content_provider,
@@ -233,7 +233,7 @@ catch (err) {
         const platformValue = typeof PLATFORM !== 'undefined' ? PLATFORM.replace(/'/g, "''") : 'unknown';
 
         const logSql = `
-        INSERT INTO UPLOAD_DB.PUBLIC.ERROR_LOG_TABLE (
+        INSERT INTO {{UPLOAD_DB}}.PUBLIC.ERROR_LOG_TABLE (
             LOG_TIME,
             LOG_MESSAGE,
             PROCEDURE_NAME,
@@ -285,7 +285,7 @@ try {
     function logStep(message, status, rowsAffected = "0", errorMessage = "") {
         const executionTime = (new Date() - startTime) / 1000; // Time in seconds
         const logSql = `
-        INSERT INTO UPLOAD_DB.PUBLIC.ERROR_LOG_TABLE (
+        INSERT INTO {{UPLOAD_DB}}.PUBLIC.ERROR_LOG_TABLE (
             LOG_TIME,
             LOG_MESSAGE,
             PROCEDURE_NAME,
@@ -410,7 +410,7 @@ catch (err) {
         const platformValue = typeof PLATFORM !== 'undefined' ? PLATFORM.replace(/'/g, "''") : 'unknown';
 
         const logSql = `
-        INSERT INTO UPLOAD_DB.PUBLIC.ERROR_LOG_TABLE (
+        INSERT INTO {{UPLOAD_DB}}.PUBLIC.ERROR_LOG_TABLE (
             LOG_TIME,
             LOG_MESSAGE,
             PROCEDURE_NAME,
@@ -462,7 +462,7 @@ try {
     function logStep(message, status, rowsAffected = "0", errorMessage = "") {
         const executionTime = (new Date() - startTime) / 1000; // Time in seconds
         const logSql = `
-        INSERT INTO UPLOAD_DB.PUBLIC.ERROR_LOG_TABLE (
+        INSERT INTO {{UPLOAD_DB}}.PUBLIC.ERROR_LOG_TABLE (
             LOG_TIME,
             LOG_MESSAGE,
             PROCEDURE_NAME,
@@ -589,7 +589,7 @@ catch (err) {
         const platformValue = typeof PLATFORM !== 'undefined' ? PLATFORM.replace(/'/g, "''") : 'unknown';
 
         const logSql = `
-        INSERT INTO UPLOAD_DB.PUBLIC.ERROR_LOG_TABLE (
+        INSERT INTO {{UPLOAD_DB}}.PUBLIC.ERROR_LOG_TABLE (
             LOG_TIME,
             LOG_MESSAGE,
             PROCEDURE_NAME,
@@ -641,7 +641,7 @@ try {
     function logStep(message, status, rowsAffected = "0", errorMessage = "") {
         const executionTime = (new Date() - startTime) / 1000; // Time in seconds
         const logSql = `
-        INSERT INTO UPLOAD_DB.PUBLIC.ERROR_LOG_TABLE (
+        INSERT INTO {{UPLOAD_DB}}.PUBLIC.ERROR_LOG_TABLE (
             LOG_TIME,
             LOG_MESSAGE,
             PROCEDURE_NAME,
@@ -771,7 +771,7 @@ catch (err) {
         const platformValue = typeof PLATFORM !== 'undefined' ? PLATFORM.replace(/'/g, "''") : 'unknown';
 
         const logSql = `
-        INSERT INTO UPLOAD_DB.PUBLIC.ERROR_LOG_TABLE (
+        INSERT INTO {{UPLOAD_DB}}.PUBLIC.ERROR_LOG_TABLE (
             LOG_TIME,
             LOG_MESSAGE,
             PROCEDURE_NAME,
@@ -824,7 +824,7 @@ try {
     function logStep(message, status, rowsAffected = "0", errorMessage = "") {
         const executionTime = (new Date() - startTime) / 1000; // Time in seconds
         const logSql = `
-        INSERT INTO UPLOAD_DB.PUBLIC.ERROR_LOG_TABLE (
+        INSERT INTO {{UPLOAD_DB}}.PUBLIC.ERROR_LOG_TABLE (
             LOG_TIME,
             LOG_MESSAGE,
             PROCEDURE_NAME,
@@ -898,7 +898,7 @@ try {
     try {
         // First create a temporary table to mark records before update
         const createMarkerSql = `
-        CREATE OR REPLACE TEMPORARY TABLE UPLOAD_DB.PUBLIC.${platformArg.toUpperCase()}_UPDATE_MARKER AS
+        CREATE OR REPLACE TEMPORARY TABLE {{UPLOAD_DB}}.PUBLIC.${platformArg.toUpperCase()}_UPDATE_MARKER AS
         SELECT
             id,
             content_provider IS NOT NULL AS had_content_provider,
@@ -1024,7 +1024,7 @@ catch (err) {
         const platformValue = typeof PLATFORM !== 'undefined' ? PLATFORM.replace(/'/g, "''") : 'unknown';
 
         const logSql = `
-        INSERT INTO UPLOAD_DB.PUBLIC.ERROR_LOG_TABLE (
+        INSERT INTO {{UPLOAD_DB}}.PUBLIC.ERROR_LOG_TABLE (
             LOG_TIME,
             LOG_MESSAGE,
             PROCEDURE_NAME,
@@ -1052,7 +1052,7 @@ catch (err) {
     return "Failed: " + err;
 }
 $$;
-GRANT USAGE ON PROCEDURE UPLOAD_DB.PUBLIC.PROCESS_VIEWERSHIP_SERIES_SEASON_EPISODE_GENERIC (VARCHAR, VARCHAR) TO ROLE WEB_APP;
+GRANT USAGE ON PROCEDURE {{UPLOAD_DB}}.PUBLIC.PROCESS_VIEWERSHIP_SERIES_SEASON_EPISODE_GENERIC (VARCHAR, VARCHAR) TO ROLE WEB_APP;
 
 CREATE OR REPLACE PROCEDURE {{UPLOAD_DB}}.public.process_viewership_title_only_generic(
     platform VARCHAR,
@@ -1076,7 +1076,7 @@ try {
     function logStep(message, status, rowsAffected = "0", errorMessage = "") {
         const executionTime = (new Date() - startTime) / 1000; // Time in seconds
         const logSql = `
-        INSERT INTO UPLOAD_DB.PUBLIC.ERROR_LOG_TABLE (
+        INSERT INTO {{UPLOAD_DB}}.PUBLIC.ERROR_LOG_TABLE (
             LOG_TIME,
             LOG_MESSAGE,
             PROCEDURE_NAME,
@@ -1203,7 +1203,7 @@ catch (err) {
         const platformValue = typeof PLATFORM !== 'undefined' ? PLATFORM.replace(/'/g, "''") : 'unknown';
 
         const logSql = `
-        INSERT INTO UPLOAD_DB.PUBLIC.ERROR_LOG_TABLE (
+        INSERT INTO {{UPLOAD_DB}}.PUBLIC.ERROR_LOG_TABLE (
             LOG_TIME,
             LOG_MESSAGE,
             PROCEDURE_NAME,
