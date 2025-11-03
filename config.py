@@ -54,7 +54,7 @@ class ProductionConfig(Config):
     # Production settings
     SNOWFLAKE_DATABASE = "upload_db_prod"
     SNOWFLAKE_SCHEMA = "public"
-    LAMBDA_FUNCTION_NAME = "register-start-viewership-data-processing-prod"
+    LAMBDA_FUNCTION_NAME = "register-start-viewership-data-processing"
     ENABLE_LAMBDA = True  # Enabled for production
 
 
