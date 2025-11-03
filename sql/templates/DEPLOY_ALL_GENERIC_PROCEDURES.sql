@@ -1437,8 +1437,8 @@ try {
         });
 
         sql_command = `
-            INSERT INTO {{ASSETS_DB}}.public.{{EPISODE_DETAILS_TABLE}}(viewership_id, ref_id, deal_parent, platform_content_name, platform_series, asset_title, asset_series, content_provider, month, year_month_day, channel, channel_id, territory, territory_id, sessions, minutes, hours, year, quarter, platform, viewership_partner, domain, label, filename, phase, week, day, unique_viewers, platform_content_id, views, platform_partner_name, platform_channel_name, platform_territory)
-            SELECT id, ref_id, deal_parent, platform_content_name, platform_series, asset_title, asset_series, content_provider, month, year_month_day, channel, channel_id, territory, territory_id, sum(tot_sessions), sum(tot_mov), sum(tot_hov), year, quarter, '${PLATFORM}', partner, 'Distribution Partners', 'Viewership', filename, CAST(phase AS VARCHAR) as phase, week, day, sum(unique_viewers) as unique_viewers, platform_content_id, sum(views) as views, platform_partner_name, platform_channel_name, platform_territory
+            INSERT INTO {{ASSETS_DB}}.public.{{EPISODE_DETAILS_TABLE}}(viewership_id, ref_id, deal_parent, platform_content_name, platform_series, asset_title, asset_series, content_provider, month, year_month_day, channel, channel_id, territory, territory_id, sessions, minutes, hours, year, quarter, platform, viewership_partner, domain, label, filename, phase, week, day, unique_viewers, platform_content_id, views, platform_partner_name, platform_channel_name, platform_territory, start_time, end_time, tot_completions)
+            SELECT id, ref_id, deal_parent, platform_content_name, platform_series, asset_title, asset_series, content_provider, month, year_month_day, channel, channel_id, territory, territory_id, sum(tot_sessions), sum(tot_mov), sum(tot_hov), year, quarter, '${PLATFORM}', partner, 'Distribution Partners', 'Viewership', filename, CAST(phase AS VARCHAR) as phase, week, day, sum(unique_viewers) as unique_viewers, platform_content_id, sum(views) as views, platform_partner_name, platform_channel_name, platform_territory, MIN(start_time) as start_time, MAX(end_time) as end_time, SUM(tot_completions) as tot_completions
             FROM {{STAGING_DB}}.public.platform_viewership
             WHERE platform = '${PLATFORM}'
             AND deal_parent is not null
@@ -1490,11 +1490,13 @@ try {
             sql_command = `
                 insert into {{ASSETS_DB}}.public.{{EPISODE_DETAILS_TABLE}}(
                     viewership_id, ref_id, deal_parent, platform_content_name, platform_series, asset_title, asset_series, content_provider, month, year_month_day, channel, channel_id, territory, territory_id, sessions, year, quarter, platform, viewership_partner, domain, label, filename, phase, week, day, unique_viewers, platform_content_id, views,
-                    register_name, payment_amount, revenue_amount, payment_date, payment_type, payment_title, payment_description, payment_department, payment_adjustment, payment_quarter, payment_year, payment_month, payment_support_category, payment_filename
+                    register_name, payment_amount, revenue_amount, payment_date, payment_type, payment_title, payment_description, payment_department, payment_adjustment, payment_quarter, payment_year, payment_month, payment_support_category, payment_filename,
+                    start_time, end_time, tot_completions
                 )
                 select
                     id, ref_id, deal_parent, platform_content_name, platform_series, asset_title, asset_series, content_provider, month, year_month_day, channel, channel_id, territory, territory_id, sum(tot_sessions), year, quarter, '${PLATFORM}', partner, 'Distribution Partners', 'Revenue', filename, CAST(phase AS VARCHAR) as phase, week, day, sum(unique_viewers) as unique_viewers, platform_content_id, sum(views) as views,
-                    CONCAT(partner, ' Revenue ', territory), revenue, revenue, year_month_day, '', '', '', '', 'False', quarter, year, month, 'Revenue', filename
+                    CONCAT(partner, ' Revenue ', territory), revenue, revenue, year_month_day, '', '', '', '', 'False', quarter, year, month, 'Revenue', filename,
+                    MIN(start_time) as start_time, MAX(end_time) as end_time, SUM(tot_completions) as tot_completions
                 from {{STAGING_DB}}.public.platform_viewership
                 WHERE platform = '${PLATFORM}'
                 AND deal_parent is not null
