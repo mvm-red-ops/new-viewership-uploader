@@ -661,5 +661,12 @@ TRANSFORMATION_TEMPLATES = {
     "Parse Date (auto-detect format)": {
         'type': 'parse_date',
         'params': {}
+    },
+    "Extract Partner (split on '-', take first)": {
+        'type': 'split_extract',
+        'params': {
+            'delimiter': '-',
+            'index': 0
+        }
     }
 }
