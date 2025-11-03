@@ -2052,10 +2052,20 @@ def display_configs(configs, sf_conn):
                 st.markdown(f"**Created:** {config['CREATED_DATE']}")
 
                 st.markdown("**Column Mappings:**")
-                mappings_df = pd.DataFrame([
-                    {"Required Field": k, "Mapped Column": v}
-                    for k, v in config['COLUMN_MAPPINGS'].items()
-                ])
+                # Normalize values for display (handle both string and dict formats)
+                mappings_list = []
+                for k, v in config['COLUMN_MAPPINGS'].items():
+                    if isinstance(v, dict):
+                        # Extract source column and add transformation indicator
+                        source = v.get('source_column', str(v))
+                        if 'transformation' in v:
+                            source = f"{source} (transformed)"
+                        mappings_list.append({"Required Field": k, "Mapped Column": source})
+                    else:
+                        # Simple string value
+                        mappings_list.append({"Required Field": k, "Mapped Column": str(v)})
+
+                mappings_df = pd.DataFrame(mappings_list)
                 st.dataframe(mappings_df, use_container_width=True, hide_index=True)
 
                 if config.get('SOURCE_COLUMNS'):
