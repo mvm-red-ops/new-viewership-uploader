@@ -840,32 +840,40 @@ def profile_data_modal(column_name, transformation_config, full_data, steps):
         st.divider()
         st.subheader("Unique Output Values")
 
-        unique_values = full_transformed.unique()
-
-        # Filter out lists for display
-        unique_values_display = [v for v in unique_values if not isinstance(v, list)]
-
-        if len(unique_values_display) > 0:
-            st.write(f"Found **{len(unique_values_display)}** unique values after transformation:")
-
-            # Show all unique values (or first 50 if too many)
-            display_limit = 50
-            if len(unique_values_display) <= display_limit:
-                values_display = ', '.join(f'`{v}`' for v in sorted(unique_values_display))
-                st.markdown(values_display)
-            else:
-                values_display = ', '.join(f'`{v}`' for v in sorted(unique_values_display)[:display_limit])
-                st.markdown(values_display)
-                st.caption(f"... and {len(unique_values_display) - display_limit} more")
-
-            # Warn if there are too many unique values
-            uniqueness_ratio = len(unique_values_display) / len(analysis_data)
-            if uniqueness_ratio > 0.5 and len(analysis_data) > 10:
-                st.warning(f"⚠️ **High uniqueness ({uniqueness_ratio:.1%}):** Many different output values. Review to ensure transformation is working as expected.")
-            else:
-                st.success(f"✓ Uniqueness ratio: {uniqueness_ratio:.1%}")
+        # Check if output is still arrays/lists (not extracted yet)
+        first_val = full_transformed.iloc[0] if len(full_transformed) > 0 else None
+        if isinstance(first_val, list):
+            st.info("ℹ️ **Output is still arrays** - Add an **Extract Part** step to get final values")
+            st.caption("Use 'Extract Part' with index to select which element you want from the split")
         else:
-            st.caption("All values are arrays (not yet extracted to final values)")
+            # Get unique values for non-list outputs
+            try:
+                unique_values = full_transformed.unique()
+                unique_values_display = [v for v in unique_values if v is not None and v != '']
+
+                if len(unique_values_display) > 0:
+                    st.write(f"Found **{len(unique_values_display)}** unique values after transformation:")
+
+                    # Show all unique values (or first 50 if too many)
+                    display_limit = 50
+                    if len(unique_values_display) <= display_limit:
+                        values_display = ', '.join(f'`{v}`' for v in sorted(map(str, unique_values_display)))
+                        st.markdown(values_display)
+                    else:
+                        values_display = ', '.join(f'`{v}`' for v in sorted(map(str, unique_values_display))[:display_limit])
+                        st.markdown(values_display)
+                        st.caption(f"... and {len(unique_values_display) - display_limit} more")
+
+                    # Warn if there are too many unique values
+                    uniqueness_ratio = len(unique_values_display) / len(analysis_data)
+                    if uniqueness_ratio > 0.5 and len(analysis_data) > 10:
+                        st.warning(f"⚠️ **High uniqueness ({uniqueness_ratio:.1%}):** Many different output values. Review to ensure transformation is working as expected.")
+                    else:
+                        st.success(f"✓ Uniqueness ratio: {uniqueness_ratio:.1%}")
+                else:
+                    st.caption("No valid output values found")
+            except Exception as e:
+                st.warning(f"Could not analyze unique values: {str(e)}")
 
     except Exception as e:
         st.error(f"Profile error: {str(e)}")
