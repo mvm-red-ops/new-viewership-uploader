@@ -721,12 +721,62 @@ def profile_data_modal(column_name, transformation_config, full_data, steps):
         import pandas as pd
         from collections import Counter
 
-        # Limit to reasonable size for performance (analyze up to 1000 rows)
+        # First: Quick pattern analysis on FULL dataset (grouped by unique values)
+        st.subheader("📊 Pattern Analysis (Full Dataset)")
+
+        # Find delimiter from first split step
+        delimiter = None
+        for step in steps:
+            if step.get('type') == 'split':
+                delimiter = step.get('params', {}).get('delimiter', ',')
+                break
+
+        if delimiter:
+            # Group by unique values and count delimiter occurrences
+            unique_values = list(set(full_data))
+            delimiter_counts = {}
+
+            for val in unique_values:
+                count = str(val).count(delimiter)
+                if count not in delimiter_counts:
+                    delimiter_counts[count] = {'count': 0, 'examples': []}
+                delimiter_counts[count]['count'] += full_data.count(val)
+                if len(delimiter_counts[count]['examples']) < 3:
+                    delimiter_counts[count]['examples'].append(val)
+
+            # Show distribution
+            st.write(f"**Delimiter (`{delimiter}`) distribution across {len(full_data):,} records:**")
+            total_records = len(full_data)
+
+            for num_delimiters in sorted(delimiter_counts.keys()):
+                info = delimiter_counts[num_delimiters]
+                count = info['count']
+                percentage = (count / total_records) * 100
+                num_parts = num_delimiters + 1
+                emoji = "✓" if percentage > 80 else "⚠️" if percentage > 5 else "ℹ️"
+
+                st.caption(f"  {emoji} **{count:,} records ({percentage:.1f}%)** have {num_delimiters} delimiter(s) → **{num_parts} parts** after split")
+
+                # Show examples
+                if info['examples']:
+                    examples_str = ', '.join(f"`{ex}`" for ex in info['examples'][:3])
+                    st.caption(f"     Examples: {examples_str}")
+
+            # Suggest extraction strategy for territory/second value
+            if len(delimiter_counts) > 1:
+                st.info("💡 **Tip for extracting second value (e.g., territory):** If you want to extract the second part regardless of total parts, use **Extract Part** with index=1. This works for both 2-part (`Partner-us`) and 3-part (`Partner-us-mobile`) splits.")
+
+            st.divider()
+
+        # Then: Detailed transformation analysis on sample
+        st.subheader("🔬 Transformation Result Analysis (Sample)")
+
+        # Limit to reasonable size for transformation analysis
         analysis_size = min(1000, len(full_data))
         analysis_data = full_data[:analysis_size]
 
         if analysis_size < len(full_data):
-            st.info(f"📊 Analyzing first {analysis_size:,} of {len(full_data):,} records for performance")
+            st.caption(f"Analyzing transformation on first {analysis_size:,} of {len(full_data):,} records")
 
         # Apply transformation to analysis data
         full_sample_series = pd.Series(analysis_data)
@@ -736,7 +786,7 @@ def profile_data_modal(column_name, transformation_config, full_data, steps):
         has_split_step = any(step.get('type') == 'split' for step in steps)
 
         if has_split_step:
-            st.subheader("Split Consistency Analysis")
+            st.write("**Split Consistency After Transformation:**")
 
             # Find the split step and analyze part counts
             split_part_counts = []
