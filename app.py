@@ -2099,27 +2099,6 @@ def load_data_tab(sf_conn):
                             config = get_config()
                             if config.ENABLE_LAMBDA:
                                 try:
-                                    # Get filenames
-                                    filenames = [info['name'] for info in file_info]
-                                    filename_str = ", ".join(filenames) if len(filenames) <= 3 else f"{filenames[0]} (+{len(filenames)-1} more)"
-
-                                    # Prepare Lambda payload with all selectors for generic table queries
-                                    lambda_payload = {
-                                        'jobType': 'Streamlit',  # Indicates data is already uploaded & normalized
-                                        'record_count': total_loaded,
-                                        'tot_hov': round(total_hov, 2),
-                                        'platform': platform,
-                                        'domain': domain if domain else None,
-                                        'filename': filename_str,
-                                        'userEmail': user_email if user_email else None,
-                                        'type': data_type if data_type else None,
-                                        'territory': territory if territory else None,
-                                        'channel': channel if channel else None,
-                                        'year': year if year else None,
-                                        'quarter': quarter if quarter else None,
-                                        'month': month if month else None,
-                                    }
-
                                     st.info("🔄 Triggering post-processing workflow (asset matching + table migration)...")
 
                                     # Load AWS config based on environment
@@ -2133,22 +2112,54 @@ def load_data_tab(sf_conn):
                                         region_name=aws_config['region']
                                     )
 
-                                    # Invoke Lambda
-                                    lambda_params = {
-                                        'FunctionName': aws_config['lambda_function_name'],
-                                        'InvocationType': 'Event',  # Asynchronous invocation
-                                        'Payload': json.dumps(lambda_payload)
-                                    }
+                                    # Invoke Lambda once per file (not once for all files with concatenated filenames)
+                                    lambda_success_count = 0
+                                    for file_idx, transformed_df in enumerate(all_transformed_dfs):
+                                        filename = file_info[file_idx]['name']
+                                        record_count = len(transformed_df)
 
-                                    print("Lambda event payload:", lambda_payload)
+                                        # Calculate TOT_HOV for this specific file
+                                        file_hov = 0.0
+                                        if 'TOT_HOV' in transformed_df.columns:
+                                            file_hov = transformed_df['TOT_HOV'].sum()
+                                        elif 'TOT_MOV' in transformed_df.columns:
+                                            file_hov = transformed_df['TOT_MOV'].sum() / 60.0
 
-                                    response = lambda_client.invoke(**lambda_params)
+                                        # Prepare Lambda payload for this specific file
+                                        lambda_payload = {
+                                            'jobType': 'Streamlit',  # Indicates data is already uploaded & normalized
+                                            'record_count': record_count,
+                                            'tot_hov': round(file_hov, 2),
+                                            'platform': platform,
+                                            'domain': domain if domain else None,
+                                            'filename': filename,
+                                            'userEmail': user_email if user_email else None,
+                                            'type': data_type if data_type else None,
+                                            'territory': territory if territory else None,
+                                            'channel': channel if channel else None,
+                                            'year': year if year else None,
+                                            'quarter': quarter if quarter else None,
+                                            'month': month if month else None,
+                                        }
 
-                                    if response['StatusCode'] == 202:
-                                        st.success("✓ Post-processing triggered! You will receive an email when complete.")
-                                        st.info("📧 Check your email for processing status (asset matching & final table migration)")
-                                    else:
-                                        st.warning(f"Lambda invocation returned status: {response['StatusCode']}")
+                                        print(f"Lambda event payload for {filename}:", lambda_payload)
+
+                                        # Invoke Lambda for this file
+                                        lambda_params = {
+                                            'FunctionName': aws_config['lambda_function_name'],
+                                            'InvocationType': 'Event',  # Asynchronous invocation
+                                            'Payload': json.dumps(lambda_payload)
+                                        }
+
+                                        response = lambda_client.invoke(**lambda_params)
+
+                                        if response['StatusCode'] == 202:
+                                            lambda_success_count += 1
+                                        else:
+                                            st.warning(f"Lambda invocation for {filename} returned status: {response['StatusCode']}")
+
+                                    st.success(f"✓ Post-processing triggered for {lambda_success_count}/{len(file_info)} file(s)! You will receive an email when complete.")
+                                    st.info("📧 Check your email for processing status (asset matching & final table migration)")
 
                                 except KeyError as e:
                                     st.warning(f"⚠️ AWS configuration missing: {str(e)}. Please configure AWS credentials in secrets.toml")
@@ -2157,6 +2168,16 @@ def load_data_tab(sf_conn):
                                     print(f"Lambda invocation error: {str(e)}")
                             else:
                                 st.info("ℹ️ Lambda invocation is currently disabled (ENABLE_LAMBDA = False in config.py)")
+
+                            # Add "Upload Another File" button to clear state and start fresh
+                            st.divider()
+                            col1, col2, col3 = st.columns([1, 2, 1])
+                            with col2:
+                                if st.button("📤 Upload Another File", type="primary", use_container_width=True):
+                                    # Clear the file uploader by clearing session state
+                                    # Note: Streamlit file_uploader doesn't have a direct clear method,
+                                    # but we can trigger a rerun to reset the widget
+                                    st.rerun()
 
                         except Exception as e:
                             st.error(f"Error loading data: {str(e)}")
