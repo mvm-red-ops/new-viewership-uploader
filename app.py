@@ -66,6 +66,7 @@ def transformation_builder_modal(column_name, sample_data, full_data=None):
     )
 
     transformation_config = None
+    steps = []  # Initialize steps for all approaches
 
     if approach == "Use Template":
         st.write("### Select a Template")
@@ -673,8 +674,8 @@ def transformation_builder_modal(column_name, sample_data, full_data=None):
     # Action buttons
     st.divider()
 
-    # Profile Data button (if we have steps configured)
-    if steps and transformation_config:
+    # Profile Data button (only for custom steps, not templates)
+    if steps and transformation_config and approach == "Build Custom Steps":
         if st.button("🔍 Profile Data", use_container_width=True, help="Analyze transformation across all data to detect issues"):
             # Close transformation builder modal
             st.session_state[f"modal_open_{column_name}"] = False
