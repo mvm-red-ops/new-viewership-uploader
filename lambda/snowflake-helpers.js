@@ -239,11 +239,19 @@ async function setContentReferences(platform, filename, databaseName) {
     const setTerritory = `call ${databaseName}.public.set_territory_generic('${platform}', '${filename}')`
     const setDealParentNormalized = `call ${databaseName}.public.set_deal_parent_normalized_generic('${platform}', '${filename}')`
     const sendAlert = `call ${databaseName}.public.send_unmatched_deals_alert('${platform}', '${filename}')`
+
+    // NEW: Extract series from titles using CONTAINS matching against dictionary
+    // This helps platforms (like Youtube) where series name is embedded in the title
+    const viewershipTableFullyQualified = `test_staging.public.platform_viewership`;
+    const setInternalSeriesExtraction = `call ${databaseName}.public.SET_INTERNAL_SERIES_WITH_EXTRACTION('${viewershipTableFullyQualified}', 'filename', '${filename}')`
+
+    // OLD: Fallback for platforms that have platform_series field populated
     const setInternalSeries = `call ${databaseName}.public.set_internal_series_generic('${platform}', '${filename}')`
+
     const dynamicAssetMatching = `call ${databaseName}.public.analyze_and_process_viewership_data_generic('${platform}', '${filename}');`;
     const setPhaseTwo = `call ${databaseName}.public.set_phase_generic('${platform}', '2', '${filename}')`
 
-    console.log({setDealParent, setChannel, setTerritory, setDealParentNormalized, sendAlert, setInternalSeries, dynamicAssetMatching, setPhaseTwo, platform});
+    console.log({setDealParent, setChannel, setTerritory, setDealParentNormalized, sendAlert, setInternalSeriesExtraction, setInternalSeries, dynamicAssetMatching, setPhaseTwo, platform});
     try {
         // Primary: Match against active_deals using RAW platform_* fields
         await runQueryWithoutBind(setDealParent)
@@ -255,8 +263,11 @@ async function setContentReferences(platform, filename, databaseName) {
         await runQueryWithoutBind(setDealParentNormalized)
         // Alert: Send email for any remaining unmatched records
         await runQueryWithoutBind(sendAlert)
-        // Asset matching: Set internal_series and match content
+        // Asset matching: Extract series from title (NEW - for platforms like Youtube)
+        await runQueryWithoutBind(setInternalSeriesExtraction)
+        // Asset matching: Set internal_series from platform_series field (OLD - fallback)
         await runQueryWithoutBind(setInternalSeries)
+        // Asset matching: Match content using various strategies
         await runQueryWithoutBind(dynamicAssetMatching)
         // Update phase to 2
         await runQueryWithoutBind(setPhaseTwo)

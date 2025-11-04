@@ -2525,28 +2525,31 @@ def apply_column_mappings(df, column_mappings, platform, channel, territory, dom
     """
     transformed_data = {}
 
+    # Get the number of rows for broadcasting scalar values
+    num_rows = len(df)
+
     # Always use the platform from the parameter
-    transformed_data['PLATFORM'] = platform
+    transformed_data['PLATFORM'] = [platform] * num_rows
 
     # Add filename if provided
     if filename:
-        transformed_data['FILENAME'] = filename
+        transformed_data['FILENAME'] = [filename] * num_rows
 
     # Use channel, territory, and domain if provided (map to correct column names)
     if channel:
-        transformed_data['PLATFORM_CHANNEL_NAME'] = channel
+        transformed_data['PLATFORM_CHANNEL_NAME'] = [channel] * num_rows
     if territory:
-        transformed_data['PLATFORM_TERRITORY'] = territory
+        transformed_data['PLATFORM_TERRITORY'] = [territory] * num_rows
     if domain:
-        transformed_data['DOMAIN'] = domain
+        transformed_data['DOMAIN'] = [domain] * num_rows
 
     # Add year, quarter, and month if provided
     if year:
-        transformed_data['YEAR'] = year
+        transformed_data['YEAR'] = [year] * num_rows
     if quarter:
-        transformed_data['QUARTER'] = quarter
+        transformed_data['QUARTER'] = [quarter] * num_rows
     if month:
-        transformed_data['MONTH'] = month
+        transformed_data['MONTH'] = [month] * num_rows
 
     # Define special column name mappings for platform_viewership table
     column_name_mapping = {
@@ -2569,15 +2572,24 @@ def apply_column_mappings(df, column_mappings, platform, channel, territory, dom
         # Handle both old and new mapping formats
         # Old format: {"Partner": "source_column_name"}
         # New format: {"Partner": {"source_column": "name", "transformation": {...}}}
-        if isinstance(mapping_value, dict) and 'source_column' in mapping_value:
-            # New format with optional transformation
-            source_col = mapping_value['source_column']
-            transformation_config = mapping_value.get('transformation')
-            unit = mapping_value.get('unit', 'hours')
+        # Hardcoded format: {"Territory": {"hardcoded_value": "United States"}}
+
+        source_col = None
+        transformation_config = None
+        hardcoded_value = None
+        unit = 'hours'
+
+        if isinstance(mapping_value, dict):
+            # New dict format - check for hardcoded_value first
+            if 'hardcoded_value' in mapping_value:
+                hardcoded_value = mapping_value['hardcoded_value']
+            elif 'source_column' in mapping_value:
+                source_col = mapping_value['source_column']
+                transformation_config = mapping_value.get('transformation')
+                unit = mapping_value.get('unit', 'hours')
         else:
-            # Old format (backwards compatible) or legacy metadata
+            # Old format (backwards compatible) - simple string mapping
             source_col = mapping_value
-            transformation_config = None
             unit = column_mappings.get('_total_watch_time_unit', 'hours')
 
         # Skip metadata keys
@@ -2585,10 +2597,23 @@ def apply_column_mappings(df, column_mappings, platform, channel, territory, dom
             continue
 
         # Skip Channel/Territory if not mapped but provided via dropdown
-        if target_col == 'Channel' and not source_col and channel:
+        if target_col == 'Channel' and not source_col and not hardcoded_value and channel:
             continue
-        if target_col == 'Territory' and not source_col and territory:
+        if target_col == 'Territory' and not source_col and not hardcoded_value and territory:
             continue
+
+        # Handle hardcoded values FIRST
+        if hardcoded_value is not None:
+            # Apply hardcoded value to all rows
+            if target_col in column_name_mapping:
+                std_col_name = column_name_mapping[target_col]
+            else:
+                std_col_name = target_col.upper().replace(' ', '_')
+
+            # Broadcast scalar value to match dataframe length
+            transformed_data[std_col_name] = [hardcoded_value] * num_rows
+            st.info(f"ℹ️ Using hardcoded value for {target_col}: '{hardcoded_value}'")
+            continue  # Skip to next column
 
         # Process if source column exists
         if source_col and source_col in df.columns:
@@ -2644,7 +2669,8 @@ def apply_column_mappings(df, column_mappings, platform, channel, territory, dom
                 else:
                     std_col_name = target_col.upper().replace(' ', '_')
 
-                transformed_data[std_col_name] = source_col  # Use the "source_col" as constant value
+                # Broadcast scalar value to match dataframe length
+                transformed_data[std_col_name] = [source_col] * num_rows  # Use the "source_col" as constant value
                 st.info(f"ℹ️ Using hardcoded value for {target_col}: '{source_col}'")
             else:
                 # For other columns, warn that column is missing
