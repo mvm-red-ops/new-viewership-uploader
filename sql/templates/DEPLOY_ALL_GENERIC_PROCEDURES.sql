@@ -697,47 +697,101 @@ try {
     const platform = PLATFORM;
     const filename = FILENAME;
 
-    // Normalize territory from platform_territory for unmatched records
-    const updateSql = `
-        UPDATE {{STAGING_DB}}.public.platform_viewership
-        SET territory = CASE
-            WHEN UPPER(platform_territory) IN ('US', 'USA', 'UNITED STATES') THEN 'United States'
-            WHEN UPPER(platform_territory) IN ('UK', 'GB', 'UNITED KINGDOM', 'GREAT BRITAIN') THEN 'United Kingdom'
-            WHEN UPPER(platform_territory) IN ('CA', 'CANADA') THEN 'Canada'
-            WHEN UPPER(platform_territory) IN ('AU', 'AUSTRALIA') THEN 'Australia'
-            WHEN UPPER(platform_territory) IN ('NZ', 'NEW ZEALAND') THEN 'New Zealand'
-            WHEN UPPER(platform_territory) IN ('INTL', 'INTERNATIONAL', 'UNSPECIFIED') THEN 'International'
-            ELSE platform_territory
-        END,
-        territory_id = CASE
-            WHEN UPPER(platform_territory) IN ('US', 'USA', 'UNITED STATES') THEN 1
-            WHEN UPPER(platform_territory) IN ('UK', 'GB', 'UNITED KINGDOM', 'GREAT BRITAIN') THEN 5
-            WHEN UPPER(platform_territory) IN ('CA', 'CANADA') THEN 4
-            WHEN UPPER(platform_territory) IN ('AU', 'AUSTRALIA') THEN 10
-            WHEN UPPER(platform_territory) IN ('NZ', 'NEW ZEALAND') THEN 13
-            WHEN UPPER(platform_territory) IN ('INTL', 'INTERNATIONAL', 'UNSPECIFIED') THEN 2
-            ELSE 0
-        END
-        WHERE platform = '${platform}'
-          AND filename = '${filename}'
-          AND territory IS NULL
-          AND platform_territory IS NOT NULL
-          AND processed IS NULL
-    `;
+    // Get all unique territory abbreviations that need normalization
+    const getAbbrevsStmt = snowflake.execute({
+        sqlText: `
+            SELECT DISTINCT territory
+            FROM {{STAGING_DB}}.public.platform_viewership
+            WHERE platform = ?
+              AND filename = ?
+              AND territory IS NOT NULL
+              AND processed IS NULL
+        `,
+        binds: [platform, filename]
+    });
 
-    console.log("Normalizing territory...");
-    const stmt = snowflake.createStatement({sqlText: updateSql});
-    stmt.execute();
-    const rowsAffected = stmt.getNumRowsAffected();
-    console.log(`Normalized territory for ${rowsAffected} records`);
+    let territoryMap = {};
+    let unmatchedTerritories = [];
+
+    // For each territory abbreviation, look up the canonical full name from dictionary
+    while (getAbbrevsStmt.next()) {
+        const abbrev = getAbbrevsStmt.getColumnValue(1);
+
+        // Look up this territory in dictionary.territories
+        const lookupStmt = snowflake.execute({
+            sqlText: `
+                SELECT DISTINCT ID
+                FROM dictionary.public.territories
+                WHERE UPPER(NAME) = UPPER(?)
+                  AND ACTIVE = TRUE
+                LIMIT 1
+            `,
+            binds: [abbrev]
+        });
+
+        if (lookupStmt.next()) {
+            const territoryId = lookupStmt.getColumnValue(1);
+
+            // Get the canonical full name for this territory ID (longest name)
+            const canonicalStmt = snowflake.execute({
+                sqlText: `
+                    SELECT NAME, ID
+                    FROM dictionary.public.territories
+                    WHERE ID = ?
+                      AND ACTIVE = TRUE
+                    ORDER BY LENGTH(NAME) DESC, NAME
+                    LIMIT 1
+                `,
+                binds: [territoryId]
+            });
+
+            if (canonicalStmt.next()) {
+                const canonicalName = canonicalStmt.getColumnValue(1);
+                const territoryIdValue = canonicalStmt.getColumnValue(2);
+                territoryMap[abbrev] = {name: canonicalName, id: territoryIdValue};
+            }
+        } else {
+            // No match found - territory will stay as-is
+            unmatchedTerritories.push(abbrev);
+        }
+    }
+
+    // Update all territories with their canonical names
+    let updateCount = 0;
+    for (let abbrev in territoryMap) {
+        const canonicalName = territoryMap[abbrev].name;
+        const territoryId = territoryMap[abbrev].id;
+
+        const updateStmt = snowflake.execute({
+            sqlText: `
+                UPDATE {{STAGING_DB}}.public.platform_viewership
+                SET territory = ?,
+                    territory_id = ?
+                WHERE platform = ?
+                  AND filename = ?
+                  AND territory = ?
+                  AND processed IS NULL
+            `,
+            binds: [canonicalName, territoryId, platform, filename, abbrev]
+        });
+
+        updateCount += updateStmt.getNumRowsAffected();
+    }
+
+    let resultMsg = `Normalized territory for ${updateCount} records`;
+    if (unmatchedTerritories.length > 0) {
+        resultMsg += `. Unmatched territories: ${unmatchedTerritories.join(', ')}`;
+    }
+
+    console.log(resultMsg);
 
     // Log to error table
     snowflake.execute({
         sqlText: "INSERT INTO {{UPLOAD_DB}}.public.error_log_table (log_time, log_message, procedure_name, platform) VALUES (CURRENT_TIMESTAMP(), ?, ?, ?)",
-        binds: [`Normalized territory for ${rowsAffected} records`, 'set_territory_generic', PLATFORM]
+        binds: [resultMsg, 'set_territory_generic', PLATFORM]
     });
 
-    return `Successfully normalized territory for ${rowsAffected} records`;
+    return `Successfully ${resultMsg}`;
 
 } catch (error) {
     const errorMessage = "Error in set_territory_generic: " + error.message;
@@ -753,6 +807,97 @@ try {
 $$;
 
 GRANT USAGE ON PROCEDURE {{UPLOAD_DB}}.public.set_territory_generic(VARCHAR, VARCHAR) TO ROLE web_app;
+
+-- ==============================================================================
+-- PHASE 2 PROCEDURE 3b: set_deal_parent_normalized_generic
+-- ==============================================================================
+-- Fallback procedure to set deal_parent using NORMALIZED fields
+-- Runs AFTER primary matching (which uses RAW platform_* fields)
+-- Matches on: normalized partner, channel, territory
+-- Only processes records where deal_parent IS NULL
+-- ==============================================================================
+
+CREATE OR REPLACE PROCEDURE {{UPLOAD_DB}}.public.set_deal_parent_normalized_generic(
+    "PLATFORM" VARCHAR,
+    "FILENAME" VARCHAR
+)
+RETURNS VARCHAR
+LANGUAGE JAVASCRIPT
+EXECUTE AS CALLER
+AS
+$$
+try {
+    const platform = PLATFORM;
+    const filename = FILENAME;
+
+    // Fallback: Match using NORMALIZED fields (partner, channel, territory)
+    // for records that didn't match on platform_* fields
+    const updateSql = `
+        UPDATE {{STAGING_DB}}.public.platform_viewership v
+        SET
+            deal_parent = ad.deal_parent,
+            partner = ad.internal_partner,
+            channel = ad.internal_channel,
+            territory = ad.internal_territory,
+            channel_id = ad.internal_channel_id,
+            territory_id = ad.internal_territory_id
+        FROM dictionary.public.active_deals ad
+        WHERE ad.platform = '${platform}'
+          AND UPPER(ad.domain) = UPPER(v.domain)
+          AND ad.active = true
+          AND (v.partner IS NULL OR UPPER(v.partner) = UPPER(ad.internal_partner))
+          AND (v.channel IS NULL OR UPPER(v.channel) = UPPER(ad.internal_channel))
+          AND (v.territory IS NULL OR UPPER(v.territory) = UPPER(ad.internal_territory))
+          AND v.filename = '${filename}'
+          AND v.platform = '${platform}'
+          AND v.deal_parent IS NULL
+          AND v.processed IS NULL
+    `;
+
+    console.log("Fallback: Setting deal_parent using normalized fields...");
+    const stmt = snowflake.createStatement({sqlText: updateSql});
+    stmt.execute();
+    const rowsAffected = stmt.getNumRowsAffected();
+    console.log(`Fallback matched ${rowsAffected} records using normalized fields`);
+
+    // Count how many still don't have deal_parent
+    const countUnmatchedSql = `
+        SELECT COUNT(*) as unmatched
+        FROM {{STAGING_DB}}.public.platform_viewership
+        WHERE platform = '${platform}'
+          AND filename = '${filename}'
+          AND deal_parent IS NULL
+          AND processed IS NULL
+    `;
+    const countStmt = snowflake.createStatement({sqlText: countUnmatchedSql});
+    const countResult = countStmt.execute();
+    countResult.next();
+    const unmatchedCount = countResult.getColumnValue(1);
+
+    const resultMsg = `Fallback set deal_parent for ${rowsAffected} records using normalized fields. ${unmatchedCount} records remain without deal_parent.`;
+
+    // Log to error table
+    snowflake.execute({
+        sqlText: "INSERT INTO {{UPLOAD_DB}}.public.error_log_table (log_time, log_message, procedure_name, platform) VALUES (CURRENT_TIMESTAMP(), ?, ?, ?)",
+        binds: [resultMsg, 'set_deal_parent_normalized_generic', PLATFORM]
+    });
+
+    return resultMsg;
+
+} catch (error) {
+    const errorMessage = "Error in set_deal_parent_normalized_generic: " + error.message;
+    console.error(errorMessage);
+
+    snowflake.execute({
+        sqlText: "INSERT INTO {{UPLOAD_DB}}.public.error_log_table (log_time, log_message, procedure_name, platform, error_message) VALUES (CURRENT_TIMESTAMP(), ?, ?, ?, ?)",
+        binds: [errorMessage, 'set_deal_parent_normalized_generic', PLATFORM, error.message]
+    });
+
+    return errorMessage;
+}
+$$;
+
+GRANT USAGE ON PROCEDURE {{UPLOAD_DB}}.public.set_deal_parent_normalized_generic(VARCHAR, VARCHAR) TO ROLE web_app;
 
 -- ==============================================================================
 -- PHASE 2 PROCEDURE 4: send_unmatched_deals_alert

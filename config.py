@@ -105,7 +105,8 @@ def load_snowflake_config() -> Dict[str, Any]:
         'account': st.secrets['snowflake']['account'],
         'warehouse': st.secrets['snowflake']['warehouse'],
         'database': config.SNOWFLAKE_DATABASE,
-        'schema': config.SNOWFLAKE_SCHEMA
+        'schema': config.SNOWFLAKE_SCHEMA,
+        'role': 'WEB_APP'  # Use WEB_APP role for CREATE PROCEDURE privileges
     }
 
 

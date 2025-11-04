@@ -100,7 +100,7 @@ class ColumnMapper:
             "AVG_SESSION_COUNT": [r"avg.?session", r"average.?session"],
             "CHANNEL_ADPOOL_IMPRESSIONS": [r"channel.?adpool.?impressions?", r"adpool.?impressions?"],
             "DURATION": [r"^duration", r"duration.?\(minutes\)"],
-            "IMPRESSIONS": [r"^impressions?$"],
+            "TOT_IMPRESSIONS": [r"tot.?impressions?", r"total.?impressions?", r"^impressions?$"],
             "TOT_SESSIONS": [r"total.?sessions?", r"tot.?sessions?", r"^sessions?$", r"session.?count"],
             "UNIQUE_VIEWERS": [r"unique.?viewers?", r"uniques?"],
             "VIEWS": [r"^views?$", r"view.?count"],

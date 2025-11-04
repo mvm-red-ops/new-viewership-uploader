@@ -237,19 +237,22 @@ async function setContentReferences(platform, filename, databaseName) {
     const setDealParent = `call ${databaseName}.public.set_deal_parent_generic('${platform}', '${filename}')`
     const setChannel = `call ${databaseName}.public.set_channel_generic('${platform}', '${filename}')`
     const setTerritory = `call ${databaseName}.public.set_territory_generic('${platform}', '${filename}')`
+    const setDealParentNormalized = `call ${databaseName}.public.set_deal_parent_normalized_generic('${platform}', '${filename}')`
     const sendAlert = `call ${databaseName}.public.send_unmatched_deals_alert('${platform}', '${filename}')`
     const setInternalSeries = `call ${databaseName}.public.set_internal_series_generic('${platform}', '${filename}')`
     const dynamicAssetMatching = `call ${databaseName}.public.analyze_and_process_viewership_data_generic('${platform}', '${filename}');`;
     const setPhaseTwo = `call ${databaseName}.public.set_phase_generic('${platform}', '2', '${filename}')`
 
-    console.log({setDealParent, setChannel, setTerritory, sendAlert, setInternalSeries, dynamicAssetMatching, setPhaseTwo, platform});
+    console.log({setDealParent, setChannel, setTerritory, setDealParentNormalized, sendAlert, setInternalSeries, dynamicAssetMatching, setPhaseTwo, platform});
     try {
-        // Primary: Match against active_deals (sets deal_parent + all normalized fields)
+        // Primary: Match against active_deals using RAW platform_* fields
         await runQueryWithoutBind(setDealParent)
         // Fallback: Pattern match channel for unmatched records
         await runQueryWithoutBind(setChannel)
         // Fallback: Normalize territory for unmatched records
         await runQueryWithoutBind(setTerritory)
+        // Fallback: Match using normalized fields (partner, channel, territory)
+        await runQueryWithoutBind(setDealParentNormalized)
         // Alert: Send email for any remaining unmatched records
         await runQueryWithoutBind(sendAlert)
         // Asset matching: Set internal_series and match content
