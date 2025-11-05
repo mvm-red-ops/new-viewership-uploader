@@ -2458,8 +2458,8 @@ def load_data_tab(sf_conn):
                                         # Prepare Lambda payload for this specific file
                                         lambda_payload = {
                                             'jobType': 'Streamlit',  # Indicates data is already uploaded & normalized
-                                            'record_count': int(record_count),
-                                            'tot_hov': float(round(file_hov, 2)),
+                                            'record_count': convert_to_native(record_count),
+                                            'tot_hov': convert_to_native(round(file_hov, 2)),
                                             'platform': platform,
                                             'domain': domain if domain else None,
                                             'filename': filename,
