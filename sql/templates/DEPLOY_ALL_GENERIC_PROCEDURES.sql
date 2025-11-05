@@ -31,6 +31,56 @@
 -- ==============================================================================
 
 -- ==============================================================================
+-- PREREQUISITE: UDF - EXTRACT_PRIMARY_TITLE
+-- ==============================================================================
+-- This UDF extracts the primary title from a comma-separated list of titles
+-- with language suffixes (e.g., "Title-en, Title-es")
+-- ==============================================================================
+
+CREATE OR REPLACE FUNCTION {{UPLOAD_DB}}.PUBLIC.EXTRACT_PRIMARY_TITLE(TITLES VARCHAR)
+RETURNS VARCHAR
+LANGUAGE JAVASCRIPT
+AS '
+if (!TITLES) return null;
+
+// Split by comma
+const titleList = TITLES.split('','').map(t => t.trim());
+
+// Look for English title first (with -en suffix)
+const englishTitle = titleList.find(t => t.endsWith(''-en''));
+if (englishTitle) {
+    // Remove the -en suffix
+    return englishTitle.substring(0, englishTitle.length - 3);
+}
+
+// If no English title, take the first one and remove language suffix
+if (titleList.length > 0) {
+    const firstTitle = titleList[0];
+    // Check if it has a language suffix (-xx)
+    const langSuffixMatch = firstTitle.match(/^(.+)-[a-z]{2}$/);
+    if (langSuffixMatch) {
+        return langSuffixMatch[1]; // Return the part before the language suffix
+    }
+    return firstTitle; // Return as is if no language suffix
+}
+
+return null;
+';
+
+-- Grant permissions on the UDF
+GRANT USAGE ON FUNCTION {{UPLOAD_DB}}.PUBLIC.EXTRACT_PRIMARY_TITLE(VARCHAR) TO ROLE WEB_APP;
+
+-- ==============================================================================
+-- PREREQUISITE: PERMISSIONS - record_reprocessing_batch_logs
+-- ==============================================================================
+-- Grant permissions for logging unmatched records
+-- ==============================================================================
+
+GRANT INSERT, SELECT ON TABLE {{METADATA_DB}}.PUBLIC.record_reprocessing_batch_logs TO ROLE WEB_APP;
+
+-- ==============================================================================
+
+-- ==============================================================================
 -- SHARED PROCEDURE: set_phase_generic
 -- ==============================================================================
 -- Updates the processing phase for records in platform_viewership table
@@ -1086,7 +1136,7 @@ CREATE OR REPLACE PROCEDURE {{UPLOAD_DB}}.public.analyze_and_process_viewership_
 )
 RETURNS VARCHAR
 LANGUAGE JAVASCRIPT
-EXECUTE AS OWNER
+EXECUTE AS CALLER
 AS
 $$
 const platformArg = PLATFORM;
@@ -1509,6 +1559,39 @@ try {
 
         if (finalUnmatchedCount > 0) {
             logStep(`FINAL RESULT: ${finalUnmatchedCount} records could not be processed by any strategy`, "WARNING");
+
+            // Log these final unmatched records to record_reprocessing_batch_logs
+            // This ensures Lambda verification accounts for ALL records
+            const logFinalUnmatchedSql = `
+                INSERT INTO {{METADATA_DB}}.public.record_reprocessing_batch_logs (
+                    title,
+                    viewership_id,
+                    filename,
+                    notes,
+                    platform
+                )
+                SELECT
+                    v.platform_content_name,
+                    v.id,
+                    v.filename,
+                    'Final unmatched: No bucket could process this record',
+                    '${platformArg}'
+                FROM {{STAGING_DB}}.public.platform_viewership v
+                JOIN {{UPLOAD_DB}}.PUBLIC.TEMP_${platformArg.toUpperCase()}_UNMATCHED u ON v.id = u.id
+                WHERE v.platform = '${platformArg}'
+                  ${filenameArg ? `AND v.filename = '${filenameArg.replace(/'/g, "''")}'` : ''}
+                  AND v.content_provider IS NULL
+                  AND v.processed IS NULL
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM {{METADATA_DB}}.public.record_reprocessing_batch_logs l
+                      WHERE l.viewership_id = v.id
+                  )
+            `;
+
+            const logResult = snowflake.execute({sqlText: logFinalUnmatchedSql});
+            const rowsLogged = logResult.getNumRowsAffected();
+            logStep(`Logged ${rowsLogged} final unmatched records to record_reprocessing_batch_logs`, "INFO");
         }
 
         // Clean up the unmatched records table

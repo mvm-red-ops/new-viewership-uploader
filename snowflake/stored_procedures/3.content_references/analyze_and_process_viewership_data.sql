@@ -11,7 +11,7 @@ try {
     var titlesArrayArg = TITLES_ARRAY;
 
     // Define table name - using generic platform_viewership table
-    const viewershipTable = `test_staging.public.platform_viewership`;
+    const viewershipTable = `STAGING_DB.public.platform_viewership`;
     
     // Start time for procedure execution
     const startTime = new Date();
@@ -273,7 +273,7 @@ try {
     const createUnmatchedSql = `
     CREATE OR REPLACE TABLE UPLOAD_DB.PUBLIC.TEMP_${platformArg.toUpperCase()}_UNMATCHED AS
     SELECT DISTINCT id
-    FROM test_staging.public.platform_viewership
+    FROM STAGING_DB.public.platform_viewership
     WHERE platform = '${platformArg}'
     AND processed IS NULL
     AND content_provider IS NULL
@@ -331,7 +331,7 @@ try {
                    REGEXP_LIKE(v.episode_number, '^[0-9]+\$') as ep_regex,
                    REGEXP_LIKE(v.season_number, '^[0-9]+\$') as season_regex
             FROM UPLOAD_DB.PUBLIC.TEMP_${platformArg.toUpperCase()}_UNMATCHED u
-            JOIN test_staging.public.platform_viewership v ON u.id = v.id
+            JOIN STAGING_DB.public.platform_viewership v ON u.id = v.id
             WHERE v.platform = '${platformArg}'
             ORDER BY u.id
             `;
@@ -364,7 +364,7 @@ try {
                    COUNT(CASE WHEN REGEXP_LIKE(v.episode_number, '^[0-9]+\$') THEN 1 END) as EPISODE_REGEX_MATCH,
                    COUNT(CASE WHEN REGEXP_LIKE(v.season_number, '^[0-9]+\$') THEN 1 END) as SEASON_REGEX_MATCH
             FROM UPLOAD_DB.PUBLIC.TEMP_${platformArg.toUpperCase()}_UNMATCHED u
-            JOIN test_staging.public.platform_viewership v ON u.id = v.id
+            JOIN STAGING_DB.public.platform_viewership v ON u.id = v.id
             WHERE v.platform = '${platformArg}'
             `;
 
@@ -388,7 +388,7 @@ try {
             CREATE OR REPLACE TEMPORARY TABLE UPLOAD_DB.PUBLIC.${bucketTableName} AS
             SELECT u.id
             FROM UPLOAD_DB.PUBLIC.TEMP_${platformArg.toUpperCase()}_UNMATCHED u
-            JOIN test_staging.public.platform_viewership v ON u.id = v.id
+            JOIN STAGING_DB.public.platform_viewership v ON u.id = v.id
             WHERE v.platform = '${platformArg}'
             AND v.ref_id IS NOT NULL AND TRIM(v.ref_id) != ''
             AND v.internal_series IS NOT NULL AND TRIM(v.internal_series) != ''
@@ -403,7 +403,7 @@ try {
             CREATE OR REPLACE TEMPORARY TABLE UPLOAD_DB.PUBLIC.${bucketTableName} AS
             SELECT u.id
             FROM UPLOAD_DB.PUBLIC.TEMP_${platformArg.toUpperCase()}_UNMATCHED u
-            JOIN test_staging.public.platform_viewership v ON u.id = v.id
+            JOIN STAGING_DB.public.platform_viewership v ON u.id = v.id
             WHERE v.platform = '${platformArg}'
             AND v.ref_id IS NOT NULL AND TRIM(v.ref_id) != ''
             AND v.internal_series IS NOT NULL AND TRIM(v.internal_series) != ''
@@ -414,7 +414,7 @@ try {
             CREATE OR REPLACE TEMPORARY TABLE UPLOAD_DB.PUBLIC.${bucketTableName} AS
             SELECT u.id
             FROM UPLOAD_DB.PUBLIC.TEMP_${platformArg.toUpperCase()}_UNMATCHED u
-            JOIN test_staging.public.platform_viewership v ON u.id = v.id
+            JOIN STAGING_DB.public.platform_viewership v ON u.id = v.id
             WHERE v.platform = '${platformArg}'
             AND v.ref_id IS NOT NULL AND TRIM(v.ref_id) != ''
             AND (v.internal_series IS NULL OR TRIM(v.internal_series) = '')
@@ -425,7 +425,7 @@ try {
             CREATE OR REPLACE TEMPORARY TABLE UPLOAD_DB.PUBLIC.${bucketTableName} AS
             SELECT u.id
             FROM UPLOAD_DB.PUBLIC.TEMP_${platformArg.toUpperCase()}_UNMATCHED u
-            JOIN test_staging.public.platform_viewership v ON u.id = v.id
+            JOIN STAGING_DB.public.platform_viewership v ON u.id = v.id
             WHERE v.platform = '${platformArg}'
             AND v.internal_series IS NOT NULL AND TRIM(v.internal_series) != ''
             AND v.episode_number IS NOT NULL AND TRIM(v.episode_number) != ''
@@ -439,7 +439,7 @@ try {
             CREATE OR REPLACE TEMPORARY TABLE UPLOAD_DB.PUBLIC.${bucketTableName} AS
             SELECT u.id
             FROM UPLOAD_DB.PUBLIC.TEMP_${platformArg.toUpperCase()}_UNMATCHED u
-            JOIN test_staging.public.platform_viewership v ON u.id = v.id
+            JOIN STAGING_DB.public.platform_viewership v ON u.id = v.id
             WHERE v.platform = '${platformArg}'
             AND (v.ref_id IS NULL OR TRIM(v.ref_id) = '')
             AND v.internal_series IS NOT NULL AND TRIM(v.internal_series) != ''
@@ -453,7 +453,7 @@ try {
             CREATE OR REPLACE TEMPORARY TABLE UPLOAD_DB.PUBLIC.${bucketTableName} AS
             SELECT u.id
             FROM UPLOAD_DB.PUBLIC.TEMP_${platformArg.toUpperCase()}_UNMATCHED u
-            JOIN test_staging.public.platform_viewership v ON u.id = v.id
+            JOIN STAGING_DB.public.platform_viewership v ON u.id = v.id
             WHERE v.platform = '${platformArg}'
             AND v.platform_content_name IS NOT NULL AND TRIM(v.platform_content_name) != ''
             AND (v.ref_id IS NULL OR TRIM(v.ref_id) = '')
@@ -478,9 +478,9 @@ try {
             continue;
         };
 
-        // Process this bucket with filename parameter  
+        // Process this bucket with filename parameter
         const processSql = `
-        CALL upload_db.public.process_viewership_${bucketType.toLowerCase()}(
+        CALL UPLOAD_DB.public.process_viewership_${bucketType.toLowerCase()}(
             '${platformArg}'
             ${filenameArg ? `, '${filenameArg.replace(/'/g, "''")}'` : ', NULL'}
         )`;
@@ -508,7 +508,7 @@ try {
             DELETE FROM UPLOAD_DB.PUBLIC.TEMP_${platformArg.toUpperCase()}_UNMATCHED u
             WHERE EXISTS (
                 SELECT 1
-                FROM test_staging.public.${platformArg}_viewership v
+                FROM STAGING_DB.public.platform_viewership v
                 WHERE v.id = u.id
                 AND v.content_provider IS NOT NULL
             )`;
@@ -572,7 +572,7 @@ try {
                 LIMIT 5
             )
             SELECT v.id, v.platform_content_name, v.ref_id, v.internal_series, v.episode_number, v.season_number
-            FROM test_staging.public.platform_viewership v
+            FROM STAGING_DB.public.platform_viewership v
             WHERE v.platform = '${platformArg}'
             AND EXISTS (SELECT 1 FROM sample_ids s WHERE s.id = v.id)
             `;
@@ -594,7 +594,40 @@ try {
                 logStep(`Sample of unmatched records: ${JSON.stringify(sampleRecords)}`, "INFO");
             }
         }
-        
+
+        // Insert unmatched records into permanent record_reprocessing_batch_logs table
+        try {
+            const insertUnmatchedSql = `
+                INSERT INTO METADATA_DB.public.record_reprocessing_batch_logs (
+                    platform, filename, platform_content_name, platform_series, internal_series,
+                    ref_id, season_number, episode_number, content_provider, asset_series,
+                    asset_title, match_status, notes, created_at
+                )
+                SELECT
+                    '${platformArg}' AS platform,
+                    '${filenameArg ? filenameArg.replace(/'/g, "''") : ''}' AS filename,
+                    platform_content_name,
+                    platform_series,
+                    internal_series,
+                    ref_id,
+                    season_number,
+                    episode_number,
+                    content_provider,
+                    asset_series,
+                    asset_title,
+                    'UNMATCHED' AS match_status,
+                    'No matching content found' AS notes,
+                    CURRENT_TIMESTAMP() AS created_at
+                FROM UPLOAD_DB.PUBLIC.TEMP_${platformArg.toUpperCase()}_UNMATCHED
+            `;
+
+            const insertResult = snowflake.execute({sqlText: insertUnmatchedSql});
+            const insertedCount = insertResult.getNumRowsAffected();
+            logStep(`Inserted ${insertedCount} unmatched records into record_reprocessing_batch_logs`, "INFO");
+        } catch (insertErr) {
+            logStep(`Warning: Failed to insert unmatched records to batch logs: ${insertErr.toString()}`, "WARNING");
+        }
+
         // Clean up the unmatched records table
         snowflake.execute({sqlText: `DROP TABLE IF EXISTS UPLOAD_DB.PUBLIC.TEMP_${platformArg.toUpperCase()}_UNMATCHED`});
         logStep("Dropped unmatched records table", "INFO");

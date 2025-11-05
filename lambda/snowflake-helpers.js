@@ -242,7 +242,8 @@ async function setContentReferences(platform, filename, databaseName) {
 
     // NEW: Extract series from titles using CONTAINS matching against dictionary
     // This helps platforms (like Youtube) where series name is embedded in the title
-    const viewershipTableFullyQualified = `test_staging.public.platform_viewership`;
+    const stagingDb = process.env.SNOWFLAKE_VIEWERSHIP_DATABASE;
+    const viewershipTableFullyQualified = `${stagingDb}.public.platform_viewership`;
     const setInternalSeriesExtraction = `call ${databaseName}.public.SET_INTERNAL_SERIES_WITH_EXTRACTION('${viewershipTableFullyQualified}', 'filename', '${filename}')`
 
     // OLD: Fallback for platforms that have platform_series field populated

@@ -1,0 +1,68 @@
+# ==============================================================================
+# Deployment Configuration
+# ==============================================================================
+# Defines environment-specific variables for SQL template replacement
+# ==============================================================================
+
+environments:
+  staging:
+    UPLOAD_DB: "UPLOAD_DB"
+    STAGING_DB: "TEST_STAGING"
+    ASSETS_DB: "STAGING_ASSETS"
+    EPISODE_DETAILS_TABLE: "EPISODE_DETAILS_TEST_STAGING"
+    METADATA_DB: "METADATA_MASTER_CLEANED_STAGING"
+
+  prod:
+    UPLOAD_DB: "UPLOAD_DB_PROD"
+    STAGING_DB: "NOSEY_PROD"
+    ASSETS_DB: "ASSETS"
+    EPISODE_DETAILS_TABLE: "EPISODE_DETAILS"
+    METADATA_DB: "METADATA_MASTER"
+
+# ==============================================================================
+# Migration Files (executed in order)
+# ==============================================================================
+migrations:
+  - name: "Schema and Tables"
+    file: "migrations/001_schema_tables.sql"
+    required: true
+
+  - name: "User-Defined Functions"
+    file: "migrations/002_udfs.sql"
+    required: true
+
+  - name: "Stored Procedures (All)"
+    file: "templates/DEPLOY_ALL_GENERIC_PROCEDURES.sql"
+    required: true
+    description: "Uses existing template file"
+
+  - name: "Content Reference Procedures"
+    file: "templates/DEPLOY_GENERIC_CONTENT_REFERENCES.sql"
+    required: true
+    description: "Uses existing template file"
+
+  - name: "Validation Procedures"
+    file: "templates/CREATE_VALIDATE_VIEWERSHIP_FOR_INSERT.sql"
+    required: true
+    description: "Uses existing template file"
+
+  - name: "Permissions and Grants"
+    file: "migrations/006_permissions.sql"
+    required: true
+
+# ==============================================================================
+# Verification Queries (run after deployment)
+# ==============================================================================
+verification:
+  - name: "Check EXTRACT_PRIMARY_TITLE UDF exists"
+    query: "SHOW USER FUNCTIONS LIKE 'EXTRACT_PRIMARY_TITLE' IN {{UPLOAD_DB}}.PUBLIC"
+    expect: "at_least_one_row"
+
+  - name: "Check platform_viewership table exists"
+    query: "SHOW TABLES LIKE 'platform_viewership' IN {{STAGING_DB}}.PUBLIC"
+    expect: "at_least_one_row"
+
+  - name: "Check EPISODE_DETAILS has platform columns"
+    query: "DESC TABLE {{ASSETS_DB}}.PUBLIC.{{EPISODE_DETAILS_TABLE}}"
+    expect: "contains"
+    contains: ["PLATFORM_PARTNER_NAME", "PLATFORM_CHANNEL_NAME", "PLATFORM_TERRITORY"]

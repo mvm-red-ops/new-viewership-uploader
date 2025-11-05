@@ -58,3 +58,7 @@ temp/
 
 # Generated SQL files (environment-specific)
 sql/generated/
+
+# Temporary debug scripts (keep only README)
+sql/temp_scripts/*
+!sql/temp_scripts/README.md

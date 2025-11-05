@@ -7,11 +7,11 @@ import re
 from difflib import SequenceMatcher
 import boto3
 
-from snowflake_utils import SnowflakeConnection
-from column_mapper import ColumnMapper
+from src.snowflake_utils import SnowflakeConnection
+from src.column_mapper import ColumnMapper
 from config import load_aws_config, get_environment_name, get_config
-from transformations import apply_transformation, TRANSFORMATION_TEMPLATES, preview_transformation_step
-from wide_format_handler import detect_and_transform
+from src.transformations import apply_transformation, TRANSFORMATION_TEMPLATES, preview_transformation_step
+from src.wide_format_handler import detect_and_transform
 
 # Transformation Builder Modal
 @st.dialog("🔧 Transformation Builder", width="large")
@@ -2444,11 +2444,22 @@ def load_data_tab(sf_conn):
                                         elif 'TOT_MOV' in transformed_df.columns:
                                             file_hov = transformed_df['TOT_MOV'].sum() / 60.0
 
+                                        # Convert numpy/pandas types to native Python types for JSON serialization
+                                        def convert_to_native(val):
+                                            """Convert numpy/pandas types to native Python types"""
+                                            if val is None:
+                                                return None
+                                            if pd.isna(val):
+                                                return None
+                                            if hasattr(val, 'item'):  # numpy/pandas scalar
+                                                return val.item()
+                                            return val
+
                                         # Prepare Lambda payload for this specific file
                                         lambda_payload = {
                                             'jobType': 'Streamlit',  # Indicates data is already uploaded & normalized
-                                            'record_count': record_count,
-                                            'tot_hov': round(file_hov, 2),
+                                            'record_count': int(record_count),
+                                            'tot_hov': float(round(file_hov, 2)),
                                             'platform': platform,
                                             'domain': domain if domain else None,
                                             'filename': filename,
@@ -2456,9 +2467,9 @@ def load_data_tab(sf_conn):
                                             'type': data_type if data_type else None,
                                             'territory': territory if territory else None,
                                             'channel': channel if channel else None,
-                                            'year': year if year else None,
-                                            'quarter': quarter if quarter else None,
-                                            'month': month if month else None,
+                                            'year': convert_to_native(year) if year else None,
+                                            'quarter': convert_to_native(quarter) if quarter else None,
+                                            'month': convert_to_native(month) if month else None,
                                             'debug_mode': debug_mode,  # Flag for debug uploads
                                         }
 

@@ -114,8 +114,9 @@ $$
 
         // Build result object
         // Validation passes if no BLOCKING errors (unmatched content is OK)
+        // If totalCount is 0, records were already processed/moved - that's valid too
         const result = {
-            valid: errors.length === 0 && totalCount > 0,
+            valid: errors.length === 0,
             validationCount: totalCount,
             matchedCount: matchedCount,
             unmatchedCount: unmatchedCount,
