@@ -729,6 +729,25 @@ class SnowflakeConnection:
                                 formatted_values.append(f"'{val.strftime('%Y-%m-%d')}'")
                             else:
                                 formatted_values.append(f"'{str(val)}'")
+                        elif col_name in ['END_TIME', 'START_TIME', 'LOAD_TIMESTAMP']:
+                            # Handle timestamp columns - convert to YYYY-MM-DD HH:MM:SS format
+                            if isinstance(val, str):
+                                try:
+                                    # Try to parse the timestamp with dayfirst=True for DD-MM-YYYY formats
+                                    parsed_ts = pd.to_datetime(val, dayfirst=True)
+                                    formatted_values.append(f"'{parsed_ts.strftime('%Y-%m-%d %H:%M:%S')}'")
+                                except:
+                                    # If parsing fails, try without dayfirst
+                                    try:
+                                        parsed_ts = pd.to_datetime(val)
+                                        formatted_values.append(f"'{parsed_ts.strftime('%Y-%m-%d %H:%M:%S')}'")
+                                    except:
+                                        # Last resort: pass as-is and let Snowflake handle it
+                                        formatted_values.append(f"'{val}'")
+                            elif isinstance(val, pd.Timestamp):
+                                formatted_values.append(f"'{val.strftime('%Y-%m-%d %H:%M:%S')}'")
+                            else:
+                                formatted_values.append(f"'{str(val)}'")
                         elif isinstance(val, str):
                             # Escape single quotes
                             escaped_val = val.replace("'", "''")
