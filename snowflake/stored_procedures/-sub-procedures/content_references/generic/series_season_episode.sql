@@ -54,7 +54,7 @@ try {
 
     // First pass: Series+Episode+Season matching (the main logic for this bucket)
     const series_episode_sql = `
-    UPDATE test_staging.public.platform_viewership w
+    UPDATE {{STAGING_DB}}.public.platform_viewership w
     SET
         w.series_code = q.series_code,
         w.content_provider = q.content_provider,
@@ -70,7 +70,7 @@ try {
             m.ref_id as ref_id,
             upload_db.public.extract_primary_title(s.titles) as asset_series
         FROM
-            test_staging.public.platform_viewership v
+            {{STAGING_DB}}.public.platform_viewership v
         JOIN UPLOAD_DB.PUBLIC.TEMP_${platformArg}_${bucketName}_BUCKET b ON (v.id = b.id)
         JOIN metadata_master_cleaned_staging.public.series s ON (upload_db.public.extract_primary_title(s.titles) = v.internal_series)
         JOIN metadata_master_cleaned_staging.public.episode e ON (s.id = e.series_id )
@@ -103,7 +103,7 @@ try {
             series_code IS NOT NULL AS had_series_code,
             asset_title IS NOT NULL AS had_asset_title,
             asset_series IS NOT NULL AS had_asset_series
-        FROM test_staging.public.platform_viewership
+        FROM {{STAGING_DB}}.public.platform_viewership
         WHERE platform = '${platformArg}'
           AND id IN (
             SELECT id FROM UPLOAD_DB.PUBLIC.TEMP_${platformArg.toUpperCase()}_${bucketName}_BUCKET
@@ -122,7 +122,7 @@ try {
         logStep("Starting fallback: series-only matching for remaining records", "IN_PROGRESS");
 
         const series_only_fallback_sql = `
-            UPDATE test_staging.public.platform_viewership w
+            UPDATE {{STAGING_DB}}.public.platform_viewership w
             SET
                 w.series_code = q.series_code,
                 w.content_provider = q.content_provider,
@@ -138,7 +138,7 @@ try {
                     m.title as asset_title,
                     m.ref_id as ref_id
                 FROM
-                    test_staging.public.platform_viewership v
+                    {{STAGING_DB}}.public.platform_viewership v
                 JOIN UPLOAD_DB.PUBLIC.TEMP_${platformArg.toUpperCase()}_${bucketName}_BUCKET b ON (v.id = b.id)
                 JOIN metadata_master_cleaned_staging.public.metadata m ON (
                     LOWER(REGEXP_REPLACE(TRIM(m.title),  '[^A-Za-z0-9]', '')) =
@@ -180,7 +180,7 @@ try {
         // Let's see how many records potentially match our criteria for unmatched
         const countPotentialUnmatched = `
         SELECT COUNT(*) AS POTENTIAL_UNMATCHED
-        FROM test_staging.public.platform_viewership v
+        FROM {{STAGING_DB}}.public.platform_viewership v
         JOIN UPLOAD_DB.PUBLIC.TEMP_${platformArg.toUpperCase()}_${bucketName}_BUCKET b ON v.id = b.id
         WHERE v.platform = '${platformArg}'
           AND v.content_provider IS NULL
@@ -205,7 +205,7 @@ try {
                         v.season_number,
                         v.episode_number,
                         'Platform: ' || v.platform || ', ' || 'Date: ' || v.month || '/' || year as notes
-                    FROM test_staging.public.platform_viewership v
+                    FROM {{STAGING_DB}}.public.platform_viewership v
                     JOIN UPLOAD_DB.PUBLIC.TEMP_${platformArg}_UNMATCHED u ON v.id = u.id
                     WHERE v.platform = '${platformArg}'
                       AND v.content_provider IS NULL

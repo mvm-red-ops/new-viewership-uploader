@@ -1146,10 +1146,11 @@ const filenameArg = FILENAME;
 const viewershipTable = `{{STAGING_DB}}.public.platform_viewership`;
 
 // Build base conditions with platform filter
+// NOTE: We don't require platform_content_name here because SERIES_SEASON_EPISODE bucket
+// can match on series+episode+season without needing a title
 const baseConditions = `platform = '${platformArg}'
 AND processed IS NULL
 AND content_provider IS NULL
-AND platform_content_name IS NOT NULL
 ${filenameArg ? `AND filename = '${filenameArg.replace(/'/g, "''")}'` : ''}`;
 
 try {
@@ -1391,6 +1392,7 @@ try {
             FROM {{UPLOAD_DB}}.PUBLIC.TEMP_${platformArg.toUpperCase()}_UNMATCHED u
             JOIN {{STAGING_DB}}.public.platform_viewership v ON u.id = v.id
             WHERE v.platform = '${platformArg}'
+            AND v.platform_content_name IS NOT NULL AND TRIM(v.platform_content_name) != ''
             AND v.ref_id IS NOT NULL AND TRIM(v.ref_id) != ''
             AND v.internal_series IS NOT NULL AND TRIM(v.internal_series) != ''
             AND v.episode_number IS NOT NULL AND TRIM(v.episode_number) != ''
@@ -1405,6 +1407,7 @@ try {
             FROM {{UPLOAD_DB}}.PUBLIC.TEMP_${platformArg.toUpperCase()}_UNMATCHED u
             JOIN {{STAGING_DB}}.public.platform_viewership v ON u.id = v.id
             WHERE v.platform = '${platformArg}'
+            AND v.platform_content_name IS NOT NULL AND TRIM(v.platform_content_name) != ''
             AND v.ref_id IS NOT NULL AND TRIM(v.ref_id) != ''
             AND v.internal_series IS NOT NULL AND TRIM(v.internal_series) != ''
             `;
@@ -1415,6 +1418,7 @@ try {
             FROM {{UPLOAD_DB}}.PUBLIC.TEMP_${platformArg.toUpperCase()}_UNMATCHED u
             JOIN {{STAGING_DB}}.public.platform_viewership v ON u.id = v.id
             WHERE v.platform = '${platformArg}'
+            AND v.platform_content_name IS NOT NULL AND TRIM(v.platform_content_name) != ''
             AND v.ref_id IS NOT NULL AND TRIM(v.ref_id) != ''
             AND (v.internal_series IS NULL OR TRIM(v.internal_series) = '')
             `;
@@ -1438,6 +1442,7 @@ try {
             FROM {{UPLOAD_DB}}.PUBLIC.TEMP_${platformArg.toUpperCase()}_UNMATCHED u
             JOIN {{STAGING_DB}}.public.platform_viewership v ON u.id = v.id
             WHERE v.platform = '${platformArg}'
+            AND v.platform_content_name IS NOT NULL AND TRIM(v.platform_content_name) != ''
             AND (v.ref_id IS NULL OR TRIM(v.ref_id) = '')
             AND v.internal_series IS NOT NULL AND TRIM(v.internal_series) != ''
             AND ((v.episode_number IS NULL OR TRIM(v.episode_number) = '' OR NOT REGEXP_LIKE(v.episode_number, '^[0-9]+$'))

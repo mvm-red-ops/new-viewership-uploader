@@ -51,7 +51,7 @@ try {
     logStep(`Processing ${bucketName} bucket for platform: ${platformArg}`, "STARTED");
 
     const sql_command = `
-    UPDATE test_staging.public.platform_viewership w
+    UPDATE {{STAGING_DB}}.public.platform_viewership w
     SET
         w.ref_id = q.ref_id,
         w.series_code = q.series_code,
@@ -67,7 +67,7 @@ try {
             s.series_code AS series_code,
             upload_db.public.extract_primary_title(s.titles) AS asset_series
         FROM
-            test_staging.public.platform_viewership v
+            {{STAGING_DB}}.public.platform_viewership v
         JOIN UPLOAD_DB.PUBLIC.TEMP_${platformArg}_${bucketName}_BUCKET b ON (v.id = b.id)
         JOIN metadata_master_cleaned_staging.public.series s ON (
             LOWER(upload_db.public.extract_primary_title(s.titles)) = LOWER(v.internal_series)

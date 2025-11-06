@@ -220,8 +220,6 @@ def main():
         print()
 
         # Import deployment check
-        import sys
-        from pathlib import Path
         diagnostics_path = Path(__file__).parent.parent / 'diagnostics'
         sys.path.insert(0, str(diagnostics_path))
         from checks import check_deployment
