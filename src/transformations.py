@@ -349,7 +349,7 @@ class DateFormatTransformation(FieldTransformation):
 
     def apply(self, value: Any) -> str:
         if pd.isna(value) or value == '':
-            return ''
+            return None
 
         try:
             date_str = str(value).strip()
