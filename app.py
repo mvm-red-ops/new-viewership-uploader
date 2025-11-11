@@ -2302,6 +2302,14 @@ def load_data_tab(sf_conn):
                         else:
                             df = pd.read_excel(uploaded_file)
 
+                        # Filter out completely empty rows (all NaN/null values)
+                        original_count = len(df)
+                        df = df.dropna(how='all')
+                        empty_rows_removed = original_count - len(df)
+
+                        if empty_rows_removed > 0:
+                            st.info(f"🧹 Removed {empty_rows_removed:,} empty rows from {uploaded_file.name}")
+
                         # Detect and transform wide format (dates as columns) to long format (dates as rows)
                         df, was_transformed, filtered_count = detect_and_transform(df)
 
