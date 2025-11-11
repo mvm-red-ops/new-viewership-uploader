@@ -2645,7 +2645,14 @@ def apply_column_mappings(df, column_mappings, platform, channel, territory, dom
                             'output_format': '%Y-%m-%d'
                         }
                     }
-                    format_name = 'DD/MM/YYYY' if detected_format == '%d/%m/%Y' else 'MM/DD/YYYY'
+                    # Show user-friendly format name based on detected format
+                    if '%d' in detected_format and detected_format.index('%d') < detected_format.index('%m'):
+                        format_name = 'DD/MM/YYYY'
+                    elif '%m' in detected_format and detected_format.index('%m') < detected_format.index('%d'):
+                        format_name = 'MM/DD/YYYY'
+                    else:
+                        format_name = detected_format  # Fallback to showing the actual format
+
                     st.info(f"📅 Auto-detected date format: **{format_name}** (e.g., {source_data.dropna().iloc[0] if len(source_data.dropna()) > 0 else 'N/A'})")
 
             # Apply transformation if configured
