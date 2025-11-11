@@ -2365,7 +2365,22 @@ def load_data_tab(sf_conn):
                     # Apply mappings and load
                     st.subheader("3. Load Data")
 
-                    if st.button("🚀 Load All Files to Platform Viewership", type="primary", use_container_width=True):
+                    # Initialize upload state if not exists
+                    if 'upload_in_progress' not in st.session_state:
+                        st.session_state.upload_in_progress = False
+
+                    # Disable button if upload is in progress
+                    upload_button = st.button(
+                        "🚀 Load All Files to Platform Viewership",
+                        type="primary",
+                        use_container_width=True,
+                        disabled=st.session_state.upload_in_progress
+                    )
+
+                    if upload_button:
+                        # Set flag to prevent double-clicks
+                        st.session_state.upload_in_progress = True
+
                         try:
                             # Get column mappings
                             column_mappings = config.get('COLUMN_MAPPINGS', {})
@@ -2514,6 +2529,9 @@ def load_data_tab(sf_conn):
                             st.error(f"Error loading data: {str(e)}")
                             import traceback
                             st.code(traceback.format_exc())
+                        finally:
+                            # Reset flag to allow future uploads
+                            st.session_state.upload_in_progress = False
 
 def apply_column_mappings(df, column_mappings, platform, channel, territory, domain, filename=None, year=None, quarter=None, month=None):
     """
