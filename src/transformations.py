@@ -184,8 +184,151 @@ class CleanNumericTransformation(FieldTransformation):
             return 0.0
 
 
+def detect_date_format(data: pd.Series, sample_size: int = 200) -> Optional[str]:
+    """
+    Robust date format detector that handles any date ordering (YYYY-MM-DD, DD/MM/YYYY, etc.)
+
+    Process:
+    1. Extract 3 segments from date strings (regardless of separator)
+    2. Identify which segment is the year (4 digits or value > 31)
+    3. For remaining 2 segments, use two-stage detection:
+       - Stage 1: Check for violations (value > 12 = day)
+       - Stage 2: Analyze repetition (repeating value = month)
+    4. Return the appropriate format string with correct separator
+
+    Args:
+        data: pandas Series containing date strings
+        sample_size: number of rows to sample for detection
+
+    Returns:
+        Format string like '%Y-%m-%d', '%d/%m/%Y', '%m-%d-%Y', etc.
+        None if format cannot be determined
+    """
+    import re
+    from collections import Counter
+
+    # Take a sample of non-null values
+    sample = data.dropna().astype(str).head(sample_size)
+    if len(sample) == 0:
+        return None
+
+    # Store parsed date components for analysis
+    parsed_dates = []
+    separator = None
+    year_position = None  # 0, 1, or 2
+
+    # Parse all dates in sample to extract segments
+    for date_str in sample:
+        date_str = date_str.strip()
+        if not date_str:
+            continue
+
+        # Match date patterns with various separators (/, -, space, etc.)
+        match = re.match(r'^(\d{1,4})[/\-\s\.](\d{1,4})[/\-\s\.](\d{1,4})$', date_str)
+        if not match:
+            continue
+
+        seg1, seg2, seg3 = int(match.group(1)), int(match.group(2)), int(match.group(3))
+
+        # Detect separator if not yet determined
+        if separator is None:
+            if '-' in date_str:
+                separator = '-'
+            elif '/' in date_str:
+                separator = '/'
+            elif ' ' in date_str:
+                separator = ' '
+            elif '.' in date_str:
+                separator = '.'
+            else:
+                separator = '-'  # Default
+
+        # Identify year position (4 digits or value > 31)
+        if year_position is None:
+            if len(match.group(1)) == 4 or seg1 > 31:
+                year_position = 0  # YYYY-?-?
+            elif len(match.group(3)) == 4 or seg3 > 31:
+                year_position = 2  # ?-?-YYYY
+            elif len(match.group(2)) == 4 or seg2 > 31:
+                year_position = 1  # ?-YYYY-? (rare but possible)
+
+        parsed_dates.append((seg1, seg2, seg3))
+
+    if not parsed_dates or year_position is None:
+        return None
+
+    # Extract the two non-year segments for month/day detection
+    if year_position == 0:
+        # YYYY-?-? format
+        first_vals = [seg2 for seg1, seg2, seg3 in parsed_dates]
+        second_vals = [seg3 for seg1, seg2, seg3 in parsed_dates]
+        format_template = (f'%Y{separator}', '', f'{separator}')
+        first_pos, second_pos = 1, 2
+    elif year_position == 2:
+        # ?-?-YYYY format
+        first_vals = [seg1 for seg1, seg2, seg3 in parsed_dates]
+        second_vals = [seg2 for seg1, seg2, seg3 in parsed_dates]
+        format_template = ('', f'{separator}', f'{separator}%Y')
+        first_pos, second_pos = 0, 1
+    else:
+        # ?-YYYY-? format (rare)
+        first_vals = [seg1 for seg1, seg2, seg3 in parsed_dates]
+        second_vals = [seg3 for seg1, seg2, seg3 in parsed_dates]
+        format_template = ('', f'{separator}%Y{separator}', '')
+        first_pos, second_pos = 0, 2
+
+    # STAGE 1: Check for violations (definitive answer)
+    # If any value > 12 in a position, that position is the DAY
+    has_first_violation = any(v > 12 for v in first_vals)
+    has_second_violation = any(v > 12 for v in second_vals)
+
+    if has_first_violation and not has_second_violation:
+        # First position has days > 12, so first=day, second=month
+        first_format, second_format = '%d', '%m'
+    elif has_second_violation and not has_first_violation:
+        # Second position has days > 12, so first=month, second=day
+        first_format, second_format = '%m', '%d'
+    else:
+        # STAGE 2: Analyze repetition patterns
+        # The position that repeats more is likely the MONTH
+        if len(first_vals) >= 3:
+            first_counter = Counter(first_vals)
+            second_counter = Counter(second_vals)
+
+            first_most_common, first_freq = first_counter.most_common(1)[0] if first_counter else (0, 0)
+            second_most_common, second_freq = second_counter.most_common(1)[0] if second_counter else (0, 0)
+
+            first_repetition_ratio = first_freq / len(first_vals) if first_vals else 0
+            second_repetition_ratio = second_freq / len(second_vals) if second_vals else 0
+
+            # If one position repeats significantly more (> 40% and 1.5x more than other), it's the month
+            if second_repetition_ratio > 0.4 and second_repetition_ratio > first_repetition_ratio * 1.5:
+                # Second repeats = month, so first=day, second=month
+                first_format, second_format = '%d', '%m'
+            elif first_repetition_ratio > 0.4 and first_repetition_ratio > second_repetition_ratio * 1.5:
+                # First repeats = month, so first=month, second=day
+                first_format, second_format = '%m', '%d'
+            else:
+                # Ambiguous - cannot determine
+                return None
+        else:
+            # Not enough data
+            return None
+
+    # Build the final format string
+    if year_position == 0:
+        # YYYY-first-second
+        return f'%Y{separator}{first_format}{separator}{second_format}'
+    elif year_position == 2:
+        # first-second-YYYY
+        return f'{first_format}{separator}{second_format}{separator}%Y'
+    else:
+        # first-YYYY-second
+        return f'{first_format}{separator}%Y{separator}{second_format}'
+
+
 class DateFormatTransformation(FieldTransformation):
-    """Parse date in various formats"""
+    """Parse date in various formats with smart auto-detection"""
 
     def __init__(self, input_format: Optional[str] = None, output_format: str = '%Y-%m-%d'):
         """
@@ -432,7 +575,19 @@ def apply_transformation(data: pd.Series, transformation_config: Dict) -> pd.Ser
     elif trans_type == 'clean_numeric':
         transform = CleanNumericTransformation(**params)
     elif trans_type == 'parse_date':
-        transform = DateFormatTransformation(**params)
+        # Auto-detect date format if input_format not specified
+        if 'input_format' not in params or params['input_format'] is None:
+            detected_format = detect_date_format(data)
+            if detected_format:
+                # Use detected format
+                params_with_detection = params.copy()
+                params_with_detection['input_format'] = detected_format
+                transform = DateFormatTransformation(**params_with_detection)
+            else:
+                # No detection possible, use default behavior
+                transform = DateFormatTransformation(**params)
+        else:
+            transform = DateFormatTransformation(**params)
     else:
         # No transformation
         return data

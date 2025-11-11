@@ -2632,6 +2632,22 @@ def apply_column_mappings(df, column_mappings, platform, channel, territory, dom
             source_data = df[source_col]
             original_data = df[source_col].copy()  # Keep a copy of original
 
+            # Special handling for Date column: Auto-detect format if no transformation configured
+            if target_col == 'Date' and not transformation_config:
+                from src.transformations import detect_date_format
+                detected_format = detect_date_format(source_data)
+                if detected_format:
+                    # Create a parse_date transformation with the detected format
+                    transformation_config = {
+                        'type': 'parse_date',
+                        'params': {
+                            'input_format': detected_format,
+                            'output_format': '%Y-%m-%d'
+                        }
+                    }
+                    format_name = 'DD/MM/YYYY' if detected_format == '%d/%m/%Y' else 'MM/DD/YYYY'
+                    st.info(f"📅 Auto-detected date format: **{format_name}** (e.g., {source_data.dropna().iloc[0] if len(source_data.dropna()) > 0 else 'N/A'})")
+
             # Apply transformation if configured
             has_transformation = False
             if transformation_config:
