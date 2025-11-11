@@ -207,10 +207,14 @@ def detect_date_format(data: pd.Series, sample_size: int = 200) -> Optional[str]
     import re
     from collections import Counter
 
-    # Take a sample of non-null values
-    sample = data.dropna().astype(str).head(sample_size)
-    if len(sample) == 0:
+    # Get unique values to avoid date-sorted bias (e.g., all "01-10-2025" at start)
+    # This ensures we see the full range of dates for violation detection
+    data_clean = data.dropna().astype(str)
+    if len(data_clean) == 0:
         return None
+
+    unique_dates = data_clean.unique()
+    sample = pd.Series(unique_dates[:sample_size]) if len(unique_dates) > sample_size else pd.Series(unique_dates)
 
     # Store parsed date components for analysis
     parsed_dates = []
