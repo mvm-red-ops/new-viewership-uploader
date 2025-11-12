@@ -48,7 +48,8 @@ class ColumnMapper:
                 r"month",
                 r"timestamp",
                 r"time",
-                r"day"
+                r"day",
+                r"watched"
             ],
             "Content Name": [
                 r"^content\s*name$",
