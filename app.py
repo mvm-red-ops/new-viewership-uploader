@@ -969,7 +969,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Required columns for viewership data
-REQUIRED_COLUMNS = [
+REQUIRED_COLUMNS_VIEWERSHIP = [
     "Partner",
     "Date",
     "Content Name",
@@ -978,6 +978,19 @@ REQUIRED_COLUMNS = [
     "Channel",
     "Territory",
     "Total Watch Time"
+]
+
+# Required columns for revenue data
+REQUIRED_COLUMNS_REVENUE = [
+    "Partner",
+    "Date",
+    "Content Name",
+    "Content ID",
+    "Series",
+    "Channel",
+    "Territory",
+    "Impressions",
+    "Revenue"
 ]
 
 # Columns that can be specified at load time instead of in template
@@ -1524,7 +1537,9 @@ def upload_and_map_tab(sf_conn):
                 st.subheader("🔗 Column Mapping")
                 st.markdown("*Fields marked with <span style='color:red;'>*</span> are required*", unsafe_allow_html=True)
 
-                mapper = ColumnMapper(df.columns.tolist(), REQUIRED_COLUMNS)
+                # Use appropriate required columns based on data type
+                required_cols = REQUIRED_COLUMNS_REVENUE if data_type == "Revenue" else REQUIRED_COLUMNS_VIEWERSHIP
+                mapper = ColumnMapper(df.columns.tolist(), required_cols)
 
                 # Load existing mappings if in edit mode
                 if st.session_state.edit_mode and st.session_state.existing_config:
@@ -1534,7 +1549,7 @@ def upload_and_map_tab(sf_conn):
                     if 'optional_columns_loaded_from_config' not in st.session_state or not st.session_state.optional_columns_loaded_from_config:
                         st.session_state.optional_columns = [
                             col for col in auto_mappings.keys()
-                            if col not in REQUIRED_COLUMNS and col not in SECTION_HEADERS
+                            if col not in required_cols and col not in SECTION_HEADERS
                         ]
                         st.session_state.optional_columns_loaded_from_config = True
                 else:
@@ -1543,14 +1558,14 @@ def upload_and_map_tab(sf_conn):
                 # Optional columns start empty - user can add them manually
 
                 # Add Channel and Territory mappings to auto_mappings for intelligent suggestions
-                all_columns_to_map = REQUIRED_COLUMNS + st.session_state.optional_columns
+                all_columns_to_map = required_cols + st.session_state.optional_columns
                 mapper_all = ColumnMapper(df.columns.tolist(), all_columns_to_map)
                 auto_mappings_all = mapper_all.suggest_mappings()
 
                 final_mappings = {}
 
                 # REQUIRED COLUMNS (with red asterisks)
-                for required_col in REQUIRED_COLUMNS:
+                for required_col in required_cols:
                     # Use saved mappings if in edit mode, otherwise use auto-suggestions
                     if st.session_state.edit_mode and st.session_state.existing_config:
                         saved_mapping = auto_mappings.get(required_col, "")
@@ -1640,8 +1655,8 @@ def upload_and_map_tab(sf_conn):
                         if applied_key in st.session_state and st.session_state[applied_key]:
                             transformation_config = st.session_state.get(transform_key)
 
-                    # Special handling for Total Watch Time - add unit selector
-                    if required_col == "Total Watch Time" and selected != "❌ Not Mapped":
+                    # Special handling for Total Watch Time - add unit selector (only for Viewership)
+                    if required_col == "Total Watch Time" and selected != "❌ Not Mapped" and data_type == "Viewership":
                         if not transformation_config:  # Only show if no transformation applied
                             st.caption("Select unit:")
 
@@ -1678,8 +1693,8 @@ def upload_and_map_tab(sf_conn):
                             label_visibility="collapsed"
                         )
                         if custom_value:
-                            # For Total Watch Time, store unit in a separate key
-                            if required_col == "Total Watch Time":
+                            # For Total Watch Time, store unit in a separate key (only for Viewership)
+                            if required_col == "Total Watch Time" and data_type == "Viewership":
                                 final_mappings[required_col] = custom_value
                                 final_mappings['_total_watch_time_unit'] = unit.lower()
                             else:
@@ -1694,8 +1709,8 @@ def upload_and_map_tab(sf_conn):
                         if transformation_config:
                             mapping_value['transformation'] = transformation_config
 
-                        # For Total Watch Time, store unit
-                        if required_col == "Total Watch Time" and not transformation_config:
+                        # For Total Watch Time, store unit (only for Viewership)
+                        if required_col == "Total Watch Time" and not transformation_config and data_type == "Viewership":
                             mapping_value['unit'] = unit.lower()
 
                         final_mappings[required_col] = mapping_value
