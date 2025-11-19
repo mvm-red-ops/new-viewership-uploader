@@ -989,7 +989,6 @@ REQUIRED_COLUMNS_REVENUE = [
     "Series",
     "Channel",
     "Territory",
-    "Impressions",
     "Revenue"
 ]
 
@@ -1004,6 +1003,7 @@ AVAILABLE_OPTIONAL_COLUMNS = {
         "AVG_SESSION_COUNT",
         "CHANNEL_ADPOOL_IMPRESSIONS",
         "DURATION",
+        "IMPRESSIONS",
         "TOT_IMPRESSIONS",
         "TOT_COMPLETIONS",
         "TOT_SESSIONS",
