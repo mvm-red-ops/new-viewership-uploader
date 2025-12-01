@@ -7,7 +7,8 @@
 
 CREATE OR REPLACE PROCEDURE {{UPLOAD_DB}}.public.validate_viewership_for_insert(
     platform VARCHAR,
-    filename VARCHAR
+    filename VARCHAR,
+    data_type VARCHAR DEFAULT 'Viewership'
 )
 RETURNS VARIANT
 LANGUAGE JAVASCRIPT
@@ -17,6 +18,7 @@ $$
     try {
         const upperPlatform = PLATFORM.toUpperCase();
         const lowerFilename = FILENAME.toLowerCase();
+        const lowerDataType = (DATA_TYPE || 'Viewership').toLowerCase();
 
         // Query records from test_staging (where Lambda processes data)
         // Check records that are ready for final insert (phase 2, not processed)
@@ -36,40 +38,85 @@ $$
 
         // Query for BLOCKING validation errors (data quality issues)
         // NOTE: Missing ref_id/asset_series are EXPECTED (unmatched content) and handled separately
-        const validationQuery = `
-            SELECT
-                id,
-                CASE
-                    WHEN deal_parent IS NULL THEN 'Missing deal_parent'
-                    WHEN tot_mov IS NULL THEN 'Missing tot_mov'
-                    WHEN tot_hov IS NULL THEN 'Missing tot_hov'
-                    WHEN week IS NULL THEN 'Missing week'
-                    WHEN day IS NULL THEN 'Missing day'
-                    ELSE 'Unknown error'
-                END as error,
-                deal_parent,
-                ref_id,
-                asset_series,
-                tot_mov,
-                tot_hov,
-                week,
-                day,
-                platform_content_name,
-                platform_series
-            FROM {{STAGING_DB}}.public.platform_viewership
-            WHERE UPPER(platform) = '${upperPlatform}'
-              AND LOWER(filename) = '${lowerFilename}'
-              AND processed IS NULL
-              AND phase = '2'
-              AND (
-                  deal_parent IS NULL
-                  OR tot_mov IS NULL
-                  OR tot_hov IS NULL
-                  OR week IS NULL
-                  OR day IS NULL
-              )
-            LIMIT 100
-        `;
+        // Build validation query based on data type
+        let validationQuery = '';
+
+        if (lowerDataType.includes('revenue')) {
+            // Revenue validation - check for revenue column instead of viewership metrics
+            // Note: week and day may be NULL for revenue-by-episode files (only month/year)
+            validationQuery = `
+                SELECT
+                    id,
+                    CASE
+                        WHEN deal_parent IS NULL THEN 'Missing deal_parent'
+                        WHEN revenue IS NULL THEN 'Missing revenue'
+                        WHEN revenue <= 0 THEN 'Invalid revenue (must be > 0)'
+                        WHEN year IS NULL THEN 'Missing year'
+                        WHEN quarter IS NULL THEN 'Missing quarter'
+                        WHEN year_month_day IS NULL THEN 'Missing year_month_day'
+                        ELSE 'Unknown error'
+                    END as error,
+                    deal_parent,
+                    ref_id,
+                    asset_series,
+                    revenue,
+                    year,
+                    quarter,
+                    year_month_day,
+                    platform_content_name,
+                    platform_series
+                FROM {{STAGING_DB}}.public.platform_viewership
+                WHERE UPPER(platform) = '${upperPlatform}'
+                  AND LOWER(filename) = '${lowerFilename}'
+                  AND processed IS NULL
+                  AND phase = '2'
+                  AND (
+                      deal_parent IS NULL
+                      OR revenue IS NULL
+                      OR revenue <= 0
+                      OR year IS NULL
+                      OR quarter IS NULL
+                      OR year_month_day IS NULL
+                  )
+                LIMIT 100
+            `;
+        } else {
+            // Viewership validation - check for viewership metrics
+            validationQuery = `
+                SELECT
+                    id,
+                    CASE
+                        WHEN deal_parent IS NULL THEN 'Missing deal_parent'
+                        WHEN tot_mov IS NULL THEN 'Missing tot_mov'
+                        WHEN tot_hov IS NULL THEN 'Missing tot_hov'
+                        WHEN week IS NULL THEN 'Missing week'
+                        WHEN day IS NULL THEN 'Missing day'
+                        ELSE 'Unknown error'
+                    END as error,
+                    deal_parent,
+                    ref_id,
+                    asset_series,
+                    tot_mov,
+                    tot_hov,
+                    week,
+                    day,
+                    platform_content_name,
+                    platform_series
+                FROM {{STAGING_DB}}.public.platform_viewership
+                WHERE UPPER(platform) = '${upperPlatform}'
+                  AND LOWER(filename) = '${lowerFilename}'
+                  AND processed IS NULL
+                  AND phase = '2'
+                  AND (
+                      deal_parent IS NULL
+                      OR tot_mov IS NULL
+                      OR tot_hov IS NULL
+                      OR week IS NULL
+                      OR day IS NULL
+                  )
+                LIMIT 100
+            `;
+        }
 
         // Separate query for unmatched content (expected, not blocking)
         const unmatchedQuery = `
@@ -88,19 +135,30 @@ $$
         // Collect BLOCKING errors only
         const errors = [];
         while (validationResult.next()) {
-            errors.push({
+            const errorObj = {
                 id: validationResult.getColumnValue('ID'),
                 error: validationResult.getColumnValue('ERROR'),
                 deal_parent: validationResult.getColumnValue('DEAL_PARENT'),
                 ref_id: validationResult.getColumnValue('REF_ID'),
                 asset_series: validationResult.getColumnValue('ASSET_SERIES'),
-                tot_mov: validationResult.getColumnValue('TOT_MOV'),
-                tot_hov: validationResult.getColumnValue('TOT_HOV'),
-                week: validationResult.getColumnValue('WEEK'),
-                day: validationResult.getColumnValue('DAY'),
                 platform_content_name: validationResult.getColumnValue('PLATFORM_CONTENT_NAME'),
                 platform_series: validationResult.getColumnValue('PLATFORM_SERIES')
-            });
+            };
+
+            // Add type-specific fields
+            if (lowerDataType.includes('revenue')) {
+                errorObj.revenue = validationResult.getColumnValue('REVENUE');
+                errorObj.year = validationResult.getColumnValue('YEAR');
+                errorObj.quarter = validationResult.getColumnValue('QUARTER');
+                errorObj.year_month_day = validationResult.getColumnValue('YEAR_MONTH_DAY');
+            } else {
+                errorObj.tot_mov = validationResult.getColumnValue('TOT_MOV');
+                errorObj.tot_hov = validationResult.getColumnValue('TOT_HOV');
+                errorObj.week = validationResult.getColumnValue('WEEK');
+                errorObj.day = validationResult.getColumnValue('DAY');
+            }
+
+            errors.push(errorObj);
         }
 
         // Get count of unmatched content (non-blocking)
@@ -156,4 +214,4 @@ $$
     }
 $$;
 
-GRANT USAGE ON PROCEDURE {{UPLOAD_DB}}.public.validate_viewership_for_insert(VARCHAR, VARCHAR) TO ROLE web_app;
+GRANT USAGE ON PROCEDURE {{UPLOAD_DB}}.public.validate_viewership_for_insert(VARCHAR, VARCHAR, VARCHAR) TO ROLE web_app;

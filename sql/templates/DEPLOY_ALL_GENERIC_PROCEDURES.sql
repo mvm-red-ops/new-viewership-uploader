@@ -1911,7 +1911,7 @@ $$
     // First, run the validation procedure (if it exists)
     // Note: validate_viewership_for_insert may need to be created or updated for generic architecture
     try {
-        var validationResult = executeStoredProcedure("{{UPLOAD_DB}}.public.validate_viewership_for_insert", [PLATFORM, FILENAME]);
+        var validationResult = executeStoredProcedure("{{UPLOAD_DB}}.public.validate_viewership_for_insert", [PLATFORM, FILENAME, TYPE]);
 
         if (validationResult.success && validationResult.data) {
             // Check validation results

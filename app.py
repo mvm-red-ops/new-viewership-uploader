@@ -1695,10 +1695,11 @@ def upload_and_map_tab(sf_conn):
                         if custom_value:
                             # For Total Watch Time, store unit in a separate key (only for Viewership)
                             if required_col == "Total Watch Time" and data_type == "Viewership":
-                                final_mappings[required_col] = custom_value
+                                final_mappings[required_col] = {'hardcoded_value': custom_value}
                                 final_mappings['_total_watch_time_unit'] = unit.lower()
                             else:
-                                final_mappings[required_col] = custom_value
+                                # Store custom values in dict format with hardcoded_value key
+                                final_mappings[required_col] = {'hardcoded_value': custom_value}
                     elif selected != "❌ Not Mapped":
                         # Store mapping with optional transformation
                         mapping_value = {
@@ -1850,8 +1851,8 @@ def upload_and_map_tab(sf_conn):
                                 label_visibility="collapsed"
                             )
                             if opt_custom_value:
-                                # Store with full label (including category)
-                                final_mappings[current_label] = opt_custom_value
+                                # Store with full label (including category) in dict format with hardcoded_value key
+                                final_mappings[current_label] = {'hardcoded_value': opt_custom_value}
                         elif opt_selected != "❌ Not Mapped":
                             # Store with full label and optional transformation
                             mapping_value = {
@@ -2646,12 +2647,6 @@ def apply_column_mappings(df, column_mappings, platform, channel, territory, dom
 
         # Skip metadata keys
         if target_col == '_total_watch_time_unit':
-            continue
-
-        # Skip Channel/Territory if not mapped but provided via dropdown
-        if target_col == 'Channel' and not source_col and not hardcoded_value and channel:
-            continue
-        if target_col == 'Territory' and not source_col and not hardcoded_value and territory:
             continue
 
         # Handle hardcoded values FIRST

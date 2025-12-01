@@ -51,12 +51,13 @@ try {
     logStep(`Processing ${bucketName} bucket for platform: ${platformArg}`, "STARTED");
 
     const sql_command = `
-    UPDATE {{STAGING_DB}}.public.platform_viewership w
+    UPDATE test_staging.public.platform_viewership w
     SET w.series_code = q.series_code,
         w.content_provider = q.content_provider,
         w.asset_title = q.title,
         w.asset_series = q.asset_series
     FROM (
+        -- First attempt: Match with title check
         SELECT
             v.id AS id,
             m.title AS title,
@@ -64,25 +65,62 @@ try {
             s.series_code AS series_code,
             upload_db.public.extract_primary_title(s.titles) AS asset_series
         FROM
-            {{STAGING_DB}}.public.platform_viewership v
+            test_staging.public.platform_viewership v
         JOIN UPLOAD_DB.PUBLIC.TEMP_${platformArg}_${bucketName}_BUCKET b ON (v.id = b.id)
         JOIN metadata_master_cleaned_staging.public.episode e ON (v.ref_id = e.ref_id)
         JOIN metadata_master_cleaned_staging.public.series s ON (s.id = e.series_id)
-        JOIN metadata_master_cleaned_staging.public.metadata m ON (
-            LOWER(REGEXP_REPLACE(TRIM(m.title), '[^A-Za-z0-9]', '')) =
-            LOWER(REGEXP_REPLACE(TRIM(v.platform_content_name), '[^A-Za-z0-9]', ''))
-            OR
-            LOWER(REGEXP_REPLACE(TRIM(m.clean_title),  '[^A-Za-z0-9]', '')) =
-            LOWER(REGEXP_REPLACE(TRIM(v.platform_content_name),  '[^A-Za-z0-9]', ''))
+        JOIN metadata_master_cleaned_staging.public.metadata m ON (e.ref_id = m.ref_id)
+        JOIN metadata_master_cleaned_staging.public.metadata m_title_check ON (
+            e.ref_id = m_title_check.ref_id
+            AND (
+                LOWER(REGEXP_REPLACE(TRIM(m_title_check.title), '[^A-Za-z0-9]', '')) =
+                LOWER(REGEXP_REPLACE(TRIM(v.platform_content_name), '[^A-Za-z0-9]', ''))
+                OR
+                LOWER(REGEXP_REPLACE(TRIM(m_title_check.clean_title), '[^A-Za-z0-9]', '')) =
+                LOWER(REGEXP_REPLACE(TRIM(v.platform_content_name), '[^A-Za-z0-9]', ''))
+            )
         )
         WHERE v.platform = '${platformArg}'
             AND v.processed IS NULL
-            AND lower(s.status) = 'active'
             AND v.content_provider IS NULL
-            AND v.platform_content_name IS NOT NULL
             AND v.ref_id IS NOT NULL
-            AND (m.title IS NOT NULL AND LENGTH(m.title) > 0)
+            AND lower(s.status) = 'active'
             ${filenameArg ? `AND v.filename = '${filenameArg.replace(/'/g, "''")}'` : ''}
+
+        UNION
+
+        -- Fallback: Match on ref_id only, no title check
+        SELECT
+            v.id AS id,
+            m.title AS title,
+            s.content_provider AS content_provider,
+            s.series_code AS series_code,
+            upload_db.public.extract_primary_title(s.titles) AS asset_series
+        FROM
+            test_staging.public.platform_viewership v
+        JOIN UPLOAD_DB.PUBLIC.TEMP_${platformArg}_${bucketName}_BUCKET b ON (v.id = b.id)
+        JOIN metadata_master_cleaned_staging.public.episode e ON (v.ref_id = e.ref_id)
+        JOIN metadata_master_cleaned_staging.public.series s ON (s.id = e.series_id)
+        JOIN metadata_master_cleaned_staging.public.metadata m ON (e.ref_id = m.ref_id)
+        WHERE v.platform = '${platformArg}'
+            AND v.processed IS NULL
+            AND v.content_provider IS NULL
+            AND v.ref_id IS NOT NULL
+            AND lower(s.status) = 'active'
+            ${filenameArg ? `AND v.filename = '${filenameArg.replace(/'/g, "''")}'` : ''}
+            -- Exclude records already matched in first attempt
+            AND NOT EXISTS (
+                SELECT 1
+                FROM metadata_master_cleaned_staging.public.metadata m_check
+                WHERE e.ref_id = m_check.ref_id
+                AND (
+                    LOWER(REGEXP_REPLACE(TRIM(m_check.title), '[^A-Za-z0-9]', '')) =
+                    LOWER(REGEXP_REPLACE(TRIM(v.platform_content_name), '[^A-Za-z0-9]', ''))
+                    OR
+                    LOWER(REGEXP_REPLACE(TRIM(m_check.clean_title), '[^A-Za-z0-9]', '')) =
+                    LOWER(REGEXP_REPLACE(TRIM(v.platform_content_name), '[^A-Za-z0-9]', ''))
+                )
+            )
     ) q
     WHERE w.id = q.id
     `;
