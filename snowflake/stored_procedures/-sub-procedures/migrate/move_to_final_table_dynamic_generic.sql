@@ -25,7 +25,7 @@ try {
 
         sql_command = `
             INSERT INTO staging_assets.public.episode_details_test_staging(viewership_id, ref_id, deal_parent, platform_content_name, platform_series, asset_title, asset_series, content_provider, month, year_month_day, channel, channel_id, territory, territory_id, sessions, minutes, hours, year, quarter, platform, viewership_partner, domain, label, filename, phase, week, day, unique_viewers, platform_content_id, views)
-            SELECT id, ref_id, deal_parent, platform_content_name, platform_series, asset_title, asset_series, content_provider, month, year_month_day, channel, channel_id, territory, territory_id, sum(tot_sessions), sum(tot_mov), sum(tot_hov), year, quarter, '${PLATFORM}', partner, 'Distribution Partners', 'Viewership', filename, CAST(phase AS VARCHAR) as phase, week, day, sum(unique_viewers) as unique_viewers, platform_content_id, sum(views) as views
+            SELECT id, ref_id, deal_parent, platform_content_name, platform_series, asset_title, asset_series, content_provider, month, year_month_day, channel, channel_id, territory, territory_id, sum(tot_sessions), sum(tot_mov), sum(tot_hov), year, quarter, '${PLATFORM}', partner, domain, 'Viewership', filename, CAST(phase AS VARCHAR) as phase, week, day, sum(unique_viewers) as unique_viewers, platform_content_id, sum(views) as views
             FROM test_staging.public.platform_viewership
             WHERE platform = '${PLATFORM}'
             AND deal_parent is not null
@@ -80,7 +80,7 @@ try {
                     register_name, payment_amount, revenue_amount, payment_date, payment_type, payment_title, payment_description, payment_department, payment_adjustment, payment_quarter, payment_year, payment_month, payment_support_category, payment_filename
                 )
                 select
-                    id, ref_id, deal_parent, platform_content_name, platform_series, asset_title, asset_series, content_provider, month, year_month_day, channel, channel_id, territory, territory_id, sum(tot_sessions), year, quarter, '${PLATFORM}', partner, 'Distribution Partners', 'Revenue', filename, CAST(phase AS VARCHAR) as phase, week, day, sum(unique_viewers) as unique_viewers, platform_content_id, sum(views) as views,
+                    id, ref_id, deal_parent, platform_content_name, platform_series, asset_title, asset_series, content_provider, month, year_month_day, channel, channel_id, territory, territory_id, sum(tot_sessions), year, quarter, '${PLATFORM}', partner, domain, 'Revenue', filename, CAST(phase AS VARCHAR) as phase, week, day, sum(unique_viewers) as unique_viewers, platform_content_id, sum(views) as views,
                     CONCAT(partner, ' Revenue ', territory), revenue, revenue, year_month_day, '', '', '', '', 'False', quarter, year, month, 'Revenue', filename
                 from test_staging.public.platform_viewership
                 WHERE platform = '${PLATFORM}'

@@ -573,8 +573,8 @@ try {
     const filename = FILENAME;
 
     // Update deal_parent AND all normalized fields by joining with active_deals table
-    // Dynamically match on platform + whichever fields are NOT NULL
-    // Match on: platform (always) + platform_partner_name (if not null) + platform_channel_name (if not null) + platform_territory (if not null)
+    // For Owned and Operated: Match ONLY on platform + domain (ignore partner/channel/territory)
+    // For Distribution Partners: Match on platform + domain + partner/channel/territory
     // Sets: deal_parent, partner, channel, territory, channel_id, territory_id
     const updateSql = `
         UPDATE {{STAGING_DB}}.public.platform_viewership v
@@ -589,9 +589,21 @@ try {
         WHERE ad.platform = '${platform}'
           AND UPPER(ad.domain) = UPPER(v.domain)
           AND ad.active = true
-          AND (v.platform_partner_name IS NULL OR UPPER(v.platform_partner_name) = UPPER(ad.platform_partner_name))
-          AND (v.platform_channel_name IS NULL OR UPPER(v.platform_channel_name) = UPPER(ad.platform_channel_name))
-          AND (v.platform_territory IS NULL OR UPPER(v.platform_territory) = UPPER(ad.platform_territory))
+          AND (
+              -- For Owned and Operated: match on platform + domain + partner (if provided)
+              (
+                  UPPER(v.domain) = 'OWNED AND OPERATED'
+                  AND (v.platform_partner_name IS NULL OR UPPER(v.platform_partner_name) = UPPER(ad.platform_partner_name))
+              )
+              OR
+              -- For Distribution Partners: match partner/channel/territory
+              (
+                  UPPER(v.domain) = 'DISTRIBUTION PARTNERS'
+                  AND (v.platform_partner_name IS NULL OR UPPER(v.platform_partner_name) = UPPER(ad.platform_partner_name))
+                  AND (v.platform_channel_name IS NULL OR UPPER(v.platform_channel_name) = UPPER(ad.platform_channel_name))
+                  AND (v.platform_territory IS NULL OR UPPER(v.platform_territory) = UPPER(ad.platform_territory))
+              )
+          )
           AND v.filename = '${filename}'
           AND v.platform = '${platform}'
           AND v.deal_parent IS NULL

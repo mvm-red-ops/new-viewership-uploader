@@ -1,7 +1,7 @@
 CREATE OR REPLACE PROCEDURE "SET_DATE_COLUMNS_DYNAMIC"("PLATFORM" VARCHAR, "FILENAME" VARCHAR)
 RETURNS VARCHAR
 LANGUAGE JAVASCRIPT
-EXECUTE AS CALLER
+EXECUTE AS OWNER
 AS '
     // Function to execute a given SQL command and return a status message
     function executeSqlCommand(sql_command) {

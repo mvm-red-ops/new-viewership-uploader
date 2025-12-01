@@ -31,15 +31,22 @@ $$
             binds: [platformArg, filenameArg]
         });
 
-        // Step 3: Set date columns (week, day, quarter, year, month)
-        console.log('Step 3: Setting date columns...');
+        // Step 3: Calculate viewership metrics (TOT_MOV from TOT_HOV or vice versa)
+        console.log('Step 3: Calculating viewership metrics...');
+        snowflake.execute({
+            sqlText: `CALL UPLOAD_DB.PUBLIC.CALCULATE_VIEWERSHIP_METRICS(?, ?)`,
+            binds: [platformArg, filenameArg]
+        });
+
+        // Step 4: Set date columns (week, day, quarter, year, month)
+        console.log('Step 4: Setting date columns...');
         snowflake.execute({
             sqlText: `CALL UPLOAD_DB.PUBLIC.SET_DATE_COLUMNS_DYNAMIC(?, ?)`,
             binds: [platformArg, filenameArg]
         });
 
-        // Step 4: Set phase to 1
-        console.log('Step 4: Setting phase to 1...');
+        // Step 5: Set phase to 1
+        console.log('Step 5: Setting phase to 1...');
         snowflake.execute({
             sqlText: `CALL UPLOAD_DB.PUBLIC.SET_PHASE_GENERIC(?, ?, ?)`,
             binds: [platformArg, '1', filenameArg]
