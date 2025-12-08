@@ -12,6 +12,7 @@ from src.column_mapper import ColumnMapper
 from config import load_aws_config, get_environment_name, get_config
 from src.transformations import apply_transformation, TRANSFORMATION_TEMPLATES, preview_transformation_step
 from src.wide_format_handler import detect_and_transform
+from src.logo_detection import detect_header_row, preview_logo_detection
 
 # Transformation Builder Modal
 @st.dialog("🔧 Transformation Builder", width="large")
@@ -1299,6 +1300,13 @@ def upload_and_map_tab(sf_conn):
         # Convert display label to backend value
         data_type = data_type_labels.get(data_type_display, data_type_display) if data_type_display else ""
 
+        # Has logo checkbox - for files with logo/banner rows at the top
+        has_logo = st.checkbox(
+            "File has logo/banner rows",
+            value=False,
+            help="Check this if your file has logo or banner rows at the top (e.g., Pluto revenue files). The system will auto-detect and skip these rows."
+        )
+
         # File uploader - disabled if no platform or data type
         if not platform or not data_type:
             st.info("⚠️ Please enter Platform name and Data Type before uploading a file")
@@ -1312,24 +1320,30 @@ def upload_and_map_tab(sf_conn):
             # Read and store the dataframe in session state
             if uploaded_file is not None:
                 try:
-                    # Read file - try to detect if it's a wide format with multi-row header
-                    if uploaded_file.name.endswith('.csv'):
-                        # First, peek at the file to check structure
-                        uploaded_file.seek(0)
-                        first_lines = uploaded_file.read(500).decode('utf-8', errors='ignore')
-                        uploaded_file.seek(0)
+                    # Determine file type
+                    file_type = 'csv' if uploaded_file.name.endswith('.csv') else 'xlsx'
 
-                        # Count how many date patterns appear in first line
-                        import re
-                        first_line = first_lines.split('\n')[0]
-                        date_pattern = re.compile(r'\d{4}-\d{2}-\d{2}')
-                        date_count = len(date_pattern.findall(first_line))
+                    # Handle logo detection if enabled
+                    header_row_idx = 0
+                    if has_logo:
+                        # Preview and detect logo rows
+                        uploaded_file.seek(0)
+                        detected_row, preview_df = preview_logo_detection(uploaded_file, file_type, preview_rows=10)
+                        header_row_idx = detected_row
 
-                        # If many dates in first line, likely wide format with multi-row header
-                        # Read with first row as header
-                        df = pd.read_csv(uploaded_file)
+                        if detected_row > 0:
+                            st.info(f"📋 Logo detection: Skipping first {detected_row} row(s). Header detected at row {detected_row + 1}.")
+                            with st.expander("Show skipped rows"):
+                                st.dataframe(preview_df.iloc[:detected_row], use_container_width=True)
+                        else:
+                            st.info("📋 No logo rows detected. Using first row as header.")
+
+                    # Read file with detected header row
+                    uploaded_file.seek(0)
+                    if file_type == 'csv':
+                        df = pd.read_csv(uploaded_file, header=header_row_idx)
                     else:
-                        df = pd.read_excel(uploaded_file)
+                        df = pd.read_excel(uploaded_file, header=header_row_idx)
 
                     # Detect and transform wide format (dates as columns) to long format (dates as rows)
                     df, was_transformed, filtered_count = detect_and_transform(df)
@@ -1348,6 +1362,7 @@ def upload_and_map_tab(sf_conn):
                     st.session_state.territory = territory
                     st.session_state.domain = domain
                     st.session_state.data_type = data_type
+                    st.session_state.has_logo = has_logo
                     st.session_state.was_wide_format = was_transformed
                     st.rerun()
                 except Exception as e:
@@ -1908,6 +1923,7 @@ def upload_and_map_tab(sf_conn):
                                 "territory": territory if territory else None,  # NULL for platform-wide configs
                                 "domain": domain if domain else None,
                                 "data_type": data_type if data_type else None,
+                                "has_logo": st.session_state.get('has_logo', False),
                                 "column_mappings": final_mappings,
                                 "filename_pattern": None,
                                 "source_columns": df.columns.tolist(),

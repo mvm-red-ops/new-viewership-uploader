@@ -110,6 +110,7 @@ class SnowflakeConnection:
             territory,
             domain,
             data_type,
+            has_logo,
             column_mappings,
             validation_rules,
             filename_pattern,
@@ -124,7 +125,7 @@ class SnowflakeConnection:
             custom_date_procedure,
             custom_normalizers
         )
-        SELECT %s, %s, %s, %s, %s, %s, %s, PARSE_JSON(%s), PARSE_JSON(%s), %s, PARSE_JSON(%s), %s, PARSE_JSON(%s), %s, %s, %s, %s, %s, %s, PARSE_JSON(%s)
+        SELECT %s, %s, %s, %s, %s, %s, %s, %s, PARSE_JSON(%s), PARSE_JSON(%s), %s, PARSE_JSON(%s), %s, PARSE_JSON(%s), %s, %s, %s, %s, %s, %s, PARSE_JSON(%s)
         """
 
         values = (
@@ -135,6 +136,7 @@ class SnowflakeConnection:
             config_data.get('territory'),  # NULL is allowed for platform-wide configs
             config_data.get('domain'),
             config_data.get('data_type'),
+            config_data.get('has_logo', False),
             json.dumps(config_data.get('column_mappings', {})),
             json.dumps(config_data.get('validation_rules', {})),
             config_data.get('filename_pattern'),
@@ -191,6 +193,7 @@ class SnowflakeConnection:
             territory = %s,
             domain = %s,
             data_type = %s,
+            has_logo = %s,
             column_mappings = PARSE_JSON(%s),
             validation_rules = PARSE_JSON(%s),
             filename_pattern = %s,
@@ -213,6 +216,7 @@ class SnowflakeConnection:
             config_data.get('territory'),  # NULL is allowed for platform-wide configs
             config_data.get('domain'),
             config_data.get('data_type'),
+            config_data.get('has_logo', False),
             json.dumps(config_data.get('column_mappings', {})),
             json.dumps(config_data.get('validation_rules', {})),
             config_data.get('filename_pattern'),
@@ -276,6 +280,7 @@ class SnowflakeConnection:
             territory,
             domain,
             data_type,
+            has_logo,
             column_mappings,
             validation_rules,
             filename_pattern,
@@ -324,6 +329,7 @@ class SnowflakeConnection:
             territory,
             domain,
             data_type,
+            has_logo,
             column_mappings,
             validation_rules,
             filename_pattern,
@@ -611,6 +617,7 @@ class SnowflakeConnection:
             territory,
             domain,
             data_type,
+            has_logo,
             column_mappings,
             validation_rules,
             filename_pattern,
@@ -646,20 +653,21 @@ class SnowflakeConnection:
             'TERRITORY': row[4],
             'DOMAIN': row[5],
             'DATA_TYPE': row[6],
-            'COLUMN_MAPPINGS': json.loads(row[7]) if isinstance(row[7], str) else row[7],
-            'VALIDATION_RULES': json.loads(row[8]) if row[8] and isinstance(row[8], str) else (row[8] or {}),
-            'FILENAME_PATTERN': row[9],
-            'SOURCE_COLUMNS': json.loads(row[10]) if row[10] and isinstance(row[10], str) else (row[10] or []),
-            'TARGET_TABLE': row[11],
-            'SAMPLE_DATA': json.loads(row[12]) if row[12] and isinstance(row[12], str) else (row[12] or []),
-            'CREATED_DATE': row[13],
-            'UPDATED_DATE': row[14],
-            'CREATED_BY': row[15],
-            'CUSTOM_SANITIZATION_PROCEDURE': row[16],
-            'CUSTOM_TERRITORY_PROCEDURE': row[17],
-            'CUSTOM_CHANNEL_PROCEDURE': row[18],
-            'CUSTOM_DATE_PROCEDURE': row[19],
-            'CUSTOM_NORMALIZERS': json.loads(row[20]) if row[20] and isinstance(row[20], str) else (row[20] or {})
+            'HAS_LOGO': row[7] if row[7] is not None else False,
+            'COLUMN_MAPPINGS': json.loads(row[8]) if isinstance(row[8], str) else row[8],
+            'VALIDATION_RULES': json.loads(row[9]) if row[9] and isinstance(row[9], str) else (row[9] or {}),
+            'FILENAME_PATTERN': row[10],
+            'SOURCE_COLUMNS': json.loads(row[11]) if row[11] and isinstance(row[11], str) else (row[11] or []),
+            'TARGET_TABLE': row[12],
+            'SAMPLE_DATA': json.loads(row[13]) if row[13] and isinstance(row[13], str) else (row[13] or []),
+            'CREATED_DATE': row[14],
+            'UPDATED_DATE': row[15],
+            'CREATED_BY': row[16],
+            'CUSTOM_SANITIZATION_PROCEDURE': row[17],
+            'CUSTOM_TERRITORY_PROCEDURE': row[18],
+            'CUSTOM_CHANNEL_PROCEDURE': row[19],
+            'CUSTOM_DATE_PROCEDURE': row[20],
+            'CUSTOM_NORMALIZERS': json.loads(row[21]) if row[21] and isinstance(row[21], str) else (row[21] or {})
         }
 
     def load_to_platform_viewership(self, df, progress_callback=None) -> int:
