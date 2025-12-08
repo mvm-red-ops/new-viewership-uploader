@@ -12,7 +12,7 @@ from src.column_mapper import ColumnMapper
 from config import load_aws_config, get_environment_name, get_config
 from src.transformations import apply_transformation, TRANSFORMATION_TEMPLATES, preview_transformation_step
 from src.wide_format_handler import detect_and_transform
-from src.logo_detection import detect_header_row, preview_logo_detection
+from src.logo_detection import detect_header_row
 
 # Transformation Builder Modal
 @st.dialog("🔧 Transformation Builder", width="large")
@@ -1124,7 +1124,12 @@ def get_cached_territories(_sf_conn):
         "Australia",
         "New Zealand",
         "International",
-        "Brazil"
+        "Brazil",
+        "Latin America",
+        "Sweden",
+        "Norway",
+        "Denmark",
+        "United Kingdom"
     ]
 
 @st.cache_data(ttl=300)  # Cache for 5 minutes
@@ -1266,16 +1271,22 @@ def upload_and_map_tab(sf_conn):
         else:
             channel = ""
 
-        # Territory dropdown (optional)
+        # Territory multi-select (optional)
         territories = get_cached_territories(sf_conn)
         if territories:
-            territory = st.selectbox(
-                "Territory (optional)",
-                options=[""] + territories,
-                help="Optional. Select a territory from the list"
+            # Get default from session state if available
+            default_territories = st.session_state.get('selected_territories', [])
+            selected_territories = st.multiselect(
+                "Territories (optional)",
+                options=territories,
+                default=default_territories,
+                help="Optional. Select one or more territories from the list",
+                key="territories_widget"
             )
+            # Store back in session state for later use
+            st.session_state.selected_territories = selected_territories
         else:
-            territory = ""
+            selected_territories = []
 
         # Additional metadata fields
         domain = st.selectbox(
@@ -1300,13 +1311,6 @@ def upload_and_map_tab(sf_conn):
         # Convert display label to backend value
         data_type = data_type_labels.get(data_type_display, data_type_display) if data_type_display else ""
 
-        # Has logo checkbox - for files with logo/banner rows at the top
-        has_logo = st.checkbox(
-            "File has logo/banner rows",
-            value=False,
-            help="Check this if your file has logo or banner rows at the top (e.g., Pluto revenue files). The system will auto-detect and skip these rows."
-        )
-
         # File uploader - disabled if no platform or data type
         if not platform or not data_type:
             st.info("⚠️ Please enter Platform name and Data Type before uploading a file")
@@ -1323,27 +1327,12 @@ def upload_and_map_tab(sf_conn):
                     # Determine file type
                     file_type = 'csv' if uploaded_file.name.endswith('.csv') else 'xlsx'
 
-                    # Handle logo detection if enabled
-                    header_row_idx = 0
-                    if has_logo:
-                        # Preview and detect logo rows
-                        uploaded_file.seek(0)
-                        detected_row, preview_df = preview_logo_detection(uploaded_file, file_type, preview_rows=10)
-                        header_row_idx = detected_row
-
-                        if detected_row > 0:
-                            st.info(f"📋 Logo detection: Skipping first {detected_row} row(s). Header detected at row {detected_row + 1}.")
-                            with st.expander("Show skipped rows"):
-                                st.dataframe(preview_df.iloc[:detected_row], use_container_width=True)
-                        else:
-                            st.info("📋 No logo rows detected. Using first row as header.")
-
-                    # Read file with detected header row
+                    # Read file with header row
                     uploaded_file.seek(0)
                     if file_type == 'csv':
-                        df = pd.read_csv(uploaded_file, header=header_row_idx)
+                        df = pd.read_csv(uploaded_file)
                     else:
-                        df = pd.read_excel(uploaded_file, header=header_row_idx)
+                        df = pd.read_excel(uploaded_file)
 
                     # Detect and transform wide format (dates as columns) to long format (dates as rows)
                     df, was_transformed, filtered_count = detect_and_transform(df)
@@ -1359,10 +1348,9 @@ def upload_and_map_tab(sf_conn):
                     st.session_state.platform = platform
                     st.session_state.partner = partner
                     st.session_state.channel = channel
-                    st.session_state.territory = territory
+                    st.session_state.selected_territories = selected_territories
                     st.session_state.domain = domain
                     st.session_state.data_type = data_type
-                    st.session_state.has_logo = has_logo
                     st.session_state.was_wide_format = was_transformed
                     st.rerun()
                 except Exception as e:
@@ -1374,7 +1362,7 @@ def upload_and_map_tab(sf_conn):
         platform = st.session_state.get('platform', '')
         partner = st.session_state.get('partner', '')
         channel = st.session_state.get('channel', '')
-        territory = st.session_state.get('territory', '')
+        selected_territories = st.session_state.get('selected_territories', [])
         domain = st.session_state.get('domain', '')
         data_type = st.session_state.get('data_type', '')
 
@@ -1406,7 +1394,11 @@ def upload_and_map_tab(sf_conn):
 
                             # Load metadata into session state
                             st.session_state.channel = existing_config.get('CHANNEL', '')
-                            st.session_state.territory = existing_config.get('TERRITORY', '')
+                            # Load territories array if available, otherwise fallback to single territory for backward compatibility
+                            territories_from_config = existing_config.get('TERRITORIES', [])
+                            if not territories_from_config and existing_config.get('TERRITORY'):
+                                territories_from_config = [existing_config.get('TERRITORY')]
+                            st.session_state.selected_territories = territories_from_config if territories_from_config else []
                             st.session_state.domain = existing_config.get('DOMAIN', '')
                             st.session_state.data_type = existing_config.get('DATA_TYPE', '')
 
@@ -1430,7 +1422,7 @@ def upload_and_map_tab(sf_conn):
                     st.session_state.platform = None
                     st.session_state.partner = None
                     st.session_state.channel = None
-                    st.session_state.territory = None
+                    st.session_state.selected_territories = []
                     st.session_state.domain = None
                     st.session_state.data_type = None
                     st.session_state.edit_mode = False
@@ -1462,21 +1454,22 @@ def upload_and_map_tab(sf_conn):
                     st.session_state.channel = channel
 
             with col_meta2:
-                # Territory dropdown
+                # Territory multi-select
                 territories = get_cached_territories(sf_conn)
                 if territories:
-                    territory_idx = 0
-                    if territory and territory in territories:
-                        territory_idx = territories.index(territory) + 1  # +1 for empty option
-                    territory = st.selectbox(
-                        "Territory (optional)",
-                        options=[""] + territories,
-                        index=territory_idx,
-                        help="Optional. Select a territory from the list",
-                        key="edit_territory"
+                    # Get default from session state if available
+                    default_territories = st.session_state.get('selected_territories', [])
+                    selected_territories = st.multiselect(
+                        "Territories (optional)",
+                        options=territories,
+                        default=default_territories,
+                        help="Optional. Select one or more territories from the list",
+                        key="territories_widget_edit"
                     )
-                    # Update session state
-                    st.session_state.territory = territory
+                    # Store back in session state for later use
+                    st.session_state.selected_territories = selected_territories
+                else:
+                    selected_territories = []
 
             # Domain field (full width)
             domain_options = ["", "Distribution Partners", "Owned and Operated"]
@@ -1593,6 +1586,11 @@ def upload_and_map_tab(sf_conn):
                                 applied_key = f"transform_applied_{required_col}"
                                 st.session_state[transform_key] = saved_mapping['transformation']
                                 st.session_state[applied_key] = True
+                        elif isinstance(saved_mapping, dict) and 'hardcoded_value' in saved_mapping:
+                            # Unwrap hardcoded value (could be nested from multiple saves)
+                            suggested = saved_mapping['hardcoded_value']
+                            while isinstance(suggested, dict) and 'hardcoded_value' in suggested:
+                                suggested = suggested['hardcoded_value']
                         else:
                             suggested = saved_mapping
                     else:
@@ -1708,13 +1706,18 @@ def upload_and_map_tab(sf_conn):
                             label_visibility="collapsed"
                         )
                         if custom_value:
+                            # Unwrap nested hardcoded_value if custom_value is a dict (from previous saves)
+                            unwrapped_value = custom_value
+                            while isinstance(unwrapped_value, dict) and 'hardcoded_value' in unwrapped_value:
+                                unwrapped_value = unwrapped_value['hardcoded_value']
+
                             # For Total Watch Time, store unit in a separate key (only for Viewership)
                             if required_col == "Total Watch Time" and data_type == "Viewership":
-                                final_mappings[required_col] = {'hardcoded_value': custom_value}
+                                final_mappings[required_col] = {'hardcoded_value': unwrapped_value}
                                 final_mappings['_total_watch_time_unit'] = unit.lower()
                             else:
                                 # Store custom values in dict format with hardcoded_value key
-                                final_mappings[required_col] = {'hardcoded_value': custom_value}
+                                final_mappings[required_col] = {'hardcoded_value': unwrapped_value}
                     elif selected != "❌ Not Mapped":
                         # Store mapping with optional transformation
                         mapping_value = {
@@ -1785,6 +1788,11 @@ def upload_and_map_tab(sf_conn):
                                     opt_applied_key = f"opt_transform_applied_{idx}"
                                     st.session_state[opt_transform_key] = saved_mapping['transformation']
                                     st.session_state[opt_applied_key] = True
+                            elif isinstance(saved_mapping, dict) and 'hardcoded_value' in saved_mapping:
+                                # Unwrap hardcoded value (could be nested from multiple saves)
+                                opt_suggested = saved_mapping['hardcoded_value']
+                                while isinstance(opt_suggested, dict) and 'hardcoded_value' in opt_suggested:
+                                    opt_suggested = opt_suggested['hardcoded_value']
                             else:
                                 opt_suggested = saved_mapping
                         else:
@@ -1866,8 +1874,13 @@ def upload_and_map_tab(sf_conn):
                                 label_visibility="collapsed"
                             )
                             if opt_custom_value:
+                                # Unwrap nested hardcoded_value if opt_custom_value is a dict (from previous saves)
+                                unwrapped_opt_value = opt_custom_value
+                                while isinstance(unwrapped_opt_value, dict) and 'hardcoded_value' in unwrapped_opt_value:
+                                    unwrapped_opt_value = unwrapped_opt_value['hardcoded_value']
+
                                 # Store with full label (including category) in dict format with hardcoded_value key
-                                final_mappings[current_label] = {'hardcoded_value': opt_custom_value}
+                                final_mappings[current_label] = {'hardcoded_value': unwrapped_opt_value}
                         elif opt_selected != "❌ Not Mapped":
                             # Store with full label and optional transformation
                             mapping_value = {
@@ -1920,10 +1933,10 @@ def upload_and_map_tab(sf_conn):
                                 "platform": platform,
                                 "partner": partner_value,
                                 "channel": channel if channel else None,  # NULL for platform-wide configs
-                                "territory": territory if territory else None,  # NULL for platform-wide configs
+                                "territories": selected_territories if selected_territories else None,  # Array for multi-territory support
+                                "territory": selected_territories[0] if selected_territories else None,  # Backward compatibility - first territory
                                 "domain": domain if domain else None,
                                 "data_type": data_type if data_type else None,
-                                "has_logo": st.session_state.get('has_logo', False),
                                 "column_mappings": final_mappings,
                                 "filename_pattern": None,
                                 "source_columns": df.columns.tolist(),
@@ -1946,7 +1959,7 @@ def upload_and_map_tab(sf_conn):
                                 st.session_state.platform = None
                                 st.session_state.partner = None
                                 st.session_state.channel = None
-                                st.session_state.territory = None
+                                st.session_state.selected_territories = []
                                 st.session_state.domain = None
                                 st.session_state.data_type = None
                             else:
@@ -1954,13 +1967,13 @@ def upload_and_map_tab(sf_conn):
                                 existing_config = sf_conn.check_duplicate_config(
                                     platform=platform,
                                     partner=partner_value,
-                                    channel=channel,
-                                    territory=territory
+                                    channel=channel
                                 )
 
                                 if existing_config:
                                     # Config exists - show warning
-                                    st.warning(f"⚠️ Configuration already exists for Platform: {platform}, Partner: {partner_value}, Channel: {channel or '(none)'}, Territory: {territory or '(none)'}")
+                                    territories_display = ', '.join(selected_territories) if selected_territories else '(none)'
+                                    st.warning(f"⚠️ Configuration already exists for Platform: {platform}, Partner: {partner_value}, Channel: {channel or '(none)'}, Territories: {territories_display}")
                                     st.info("Would you like to **update** the existing configuration instead?")
 
                                     col_yes, col_no = st.columns(2)
@@ -1980,7 +1993,7 @@ def upload_and_map_tab(sf_conn):
                                             st.session_state.platform = None
                                             st.session_state.partner = None
                                             st.session_state.channel = None
-                                            st.session_state.territory = None
+                                            st.session_state.selected_territories = []
                                             st.session_state.domain = None
                                             st.session_state.data_type = None
                                             st.rerun()
@@ -2004,7 +2017,7 @@ def upload_and_map_tab(sf_conn):
                                     st.session_state.platform = None
                                     st.session_state.partner = None
                                     st.session_state.channel = None
-                                    st.session_state.territory = None
+                                    st.session_state.selected_territories = []
                                     st.session_state.domain = None
                                     st.session_state.data_type = None
 
@@ -2023,7 +2036,7 @@ def upload_and_map_tab(sf_conn):
                         st.session_state.platform = None
                         st.session_state.partner = None
                         st.session_state.channel = None
-                        st.session_state.territory = None
+                        st.session_state.selected_territories = []
                         st.session_state.domain = None
                         st.session_state.data_type = None
                         st.rerun()
@@ -2144,7 +2157,11 @@ def display_configs(configs, sf_conn):
                         st.session_state.platform = config['PLATFORM']
                         st.session_state.partner = config['PARTNER'] if config['PARTNER'] != 'DEFAULT' else ""
                         st.session_state.channel = config.get('CHANNEL', '')
-                        st.session_state.territory = config.get('TERRITORY', '')
+                        # Load territories array if available, otherwise fallback to single territory for backward compatibility
+                        territories_from_config = config.get('TERRITORIES', [])
+                        if not territories_from_config and config.get('TERRITORY'):
+                            territories_from_config = [config.get('TERRITORY')]
+                        st.session_state.selected_territories = territories_from_config if territories_from_config else []
                         st.session_state.domain = config.get('DOMAIN', '')
                         st.session_state.data_type = config.get('DATA_TYPE', '')
 
@@ -2379,6 +2396,13 @@ def load_data_tab(sf_conn):
                         try:
                             # Apply transformations to preview
                             column_mappings = config.get('COLUMN_MAPPINGS', {})
+                            # Unwrap any nested hardcoded_value dicts from previous saves
+                            for key, value in column_mappings.items():
+                                if isinstance(value, dict) and 'hardcoded_value' in value:
+                                    unwrapped = value['hardcoded_value']
+                                    while isinstance(unwrapped, dict) and 'hardcoded_value' in unwrapped:
+                                        unwrapped = unwrapped['hardcoded_value']
+                                    column_mappings[key] = {'hardcoded_value': unwrapped}
                             preview_df = apply_column_mappings(
                                 file_info[0]['df'].head(50),
                                 column_mappings,
@@ -2424,6 +2448,13 @@ def load_data_tab(sf_conn):
                         try:
                             # Get column mappings
                             column_mappings = config.get('COLUMN_MAPPINGS', {})
+                            # Unwrap any nested hardcoded_value dicts from previous saves
+                            for key, value in column_mappings.items():
+                                if isinstance(value, dict) and 'hardcoded_value' in value:
+                                    unwrapped = value['hardcoded_value']
+                                    while isinstance(unwrapped, dict) and 'hardcoded_value' in unwrapped:
+                                        unwrapped = unwrapped['hardcoded_value']
+                                    column_mappings[key] = {'hardcoded_value': unwrapped}
 
                             # Process each file
                             total_loaded = 0
@@ -2440,6 +2471,26 @@ def load_data_tab(sf_conn):
                                 try:
                                     # Transform data according to mappings
                                     transformed_df = apply_column_mappings(info['df'], column_mappings, platform, channel, territory, domain, info['name'], year, quarter, month)
+
+                                    # Filter out records with zero or empty revenue
+                                    if 'REVENUE' in transformed_df.columns:
+                                        original_count = len(transformed_df)
+                                        # Clean revenue column first
+                                        transformed_df['REVENUE'] = transformed_df['REVENUE'].apply(lambda x:
+                                            x.replace('$', '').replace(',', '').replace(' ', '').strip() if isinstance(x, str) else x
+                                        )
+                                        # Remove rows where revenue is 0, empty, "-", or NULL
+                                        transformed_df = transformed_df[
+                                            (transformed_df['REVENUE'].notna()) &
+                                            (transformed_df['REVENUE'] != '') &
+                                            (transformed_df['REVENUE'] != '-') &
+                                            (transformed_df['REVENUE'] != '0') &
+                                            (transformed_df['REVENUE'].astype(str) != '0.0')
+                                        ]
+                                        filtered_count = original_count - len(transformed_df)
+                                        if filtered_count > 0:
+                                            st.info(f"  └─ Filtered out {filtered_count:,} zero-revenue records. Loading {len(transformed_df):,} records.")
+
                                     all_transformed_dfs.append(transformed_df)
 
                                     # Calculate total hours of viewership
@@ -2652,6 +2703,9 @@ def apply_column_mappings(df, column_mappings, platform, channel, territory, dom
             # New dict format - check for hardcoded_value first
             if 'hardcoded_value' in mapping_value:
                 hardcoded_value = mapping_value['hardcoded_value']
+                # Unwrap nested hardcoded_value dicts (happens when config is resaved)
+                while isinstance(hardcoded_value, dict) and 'hardcoded_value' in hardcoded_value:
+                    hardcoded_value = hardcoded_value['hardcoded_value']
             elif 'source_column' in mapping_value:
                 source_col = mapping_value['source_column']
                 transformation_config = mapping_value.get('transformation')

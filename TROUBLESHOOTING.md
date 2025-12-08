@@ -177,7 +177,9 @@ SELECT GET_DDL('PROCEDURE', 'upload_db_prod.public.move_data_to_final_table_dyna
 - Lambda logs show `set_deal_parent_generic` was called
 - Records exist in `DICTIONARY.PUBLIC.active_deals` for the platform
 
-**Root Cause:** Confusion about which database to check
+**Root Causes:**
+1. Confusion about which database to check
+2. Territory mismatch between data and active_deals configuration
 
 **Understanding the Flow:**
 
@@ -234,6 +236,107 @@ The stored procedure matches on:
 - `active = true`
 
 If no match found, check that your data values exactly match the active_deals configuration.
+
+### Territory Matching Issues (Dec 8, 2025)
+
+**Specific Problem:** Data has specific territory but active_deals has NULL territory
+
+**Example:**
+- Pluto data uploaded with `platform_territory = 'Latin America'`
+- active_deals has `platform_territory = NULL`
+- Procedure returns: "Successfully set deal_parent for 0 records"
+
+**How NULL Territory Matching Works:**
+
+The procedure uses: `(v.platform_territory IS NULL OR UPPER(v.platform_territory) = UPPER(ad.platform_territory))`
+
+**NULL Behavior:**
+- Data NULL + active_deals NULL = MATCH ✓
+- Data NULL + active_deals 'Latin America' = MATCH ✓ (data wildcard)
+- Data 'Latin America' + active_deals NULL = NO MATCH ✗
+- Data 'Latin America' + active_deals 'Latin America' = MATCH ✓
+
+**Key Insight:** NULL territories in active_deals do NOT act as wildcards. Only NULL in DATA acts as a wildcard.
+
+**Solution: Create Territory-Specific active_deals Entries**
+
+1. **Find territories in your data:**
+```sql
+SELECT DISTINCT platform_territory
+FROM TEST_STAGING.PUBLIC.platform_viewership
+WHERE platform = 'Pluto'
+AND filename = 'your-file.csv'
+AND deal_parent IS NULL;
+```
+
+2. **Find template record:**
+```sql
+SELECT *
+FROM DICTIONARY.PUBLIC.active_deals
+WHERE platform = 'Pluto'
+AND platform_territory IS NULL
+LIMIT 1;
+```
+
+3. **Create territory-specific entry:**
+```python
+from src.snowflake_utils import SnowflakeConnection
+
+conn = SnowflakeConnection()
+cursor = conn.cursor
+
+# Get template
+cursor.execute('''
+SELECT platform, domain, platform_partner_name, platform_channel_name,
+       deal_parent, internal_partner, internal_channel, internal_territory,
+       internal_channel_id, internal_territory_id, active
+FROM DICTIONARY.PUBLIC.active_deals
+WHERE platform = 'Pluto' AND platform_territory IS NULL
+LIMIT 1
+''')
+template = cursor.fetchone()
+
+# Insert for specific territory
+cursor.execute('''
+INSERT INTO DICTIONARY.PUBLIC.active_deals (
+    platform, domain, platform_partner_name, platform_channel_name,
+    platform_territory, deal_parent, internal_partner, internal_channel,
+    internal_territory, internal_channel_id, internal_territory_id, active
+) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+''', (
+    template[0], template[1], template[2], template[3],
+    'Latin America',  # The specific territory
+    template[4], template[5], template[6], template[7],
+    template[8], template[9], template[10]
+))
+
+conn.conn.commit()
+print('✓ Created active_deals entry for Latin America')
+conn.close()
+```
+
+**IMPORTANT:** Use `%s` for Snowflake parameter binding, NOT `?` (which is SQLite syntax)
+
+4. **Re-run the procedure:**
+```python
+conn = SnowflakeConnection()
+cursor = conn.cursor
+cursor.execute("CALL UPLOAD_DB.PUBLIC.SET_DEAL_PARENT_GENERIC('Pluto', 'your-file.csv')")
+result = cursor.fetchone()
+print(result[0])  # Should show: "Successfully set deal_parent for N records"
+conn.close()
+```
+
+**Verification:**
+```sql
+SELECT COUNT(*) as with_deal_parent
+FROM TEST_STAGING.PUBLIC.platform_viewership
+WHERE platform = 'Pluto'
+AND filename = 'your-file.csv'
+AND deal_parent IS NOT NULL;
+```
+
+**See Also:** `.claude/government/governors/snowflake/README.md` for complete documentation
 
 ---
 
@@ -310,7 +413,111 @@ cd sql
 
 ---
 
+## Template Configuration Issues
+
+### Problem: Multi-Territory Selection Not Working
+
+**Symptoms:**
+- Territory multiselect shows "weird caching behavior"
+- Selected territories don't persist when switching between create/edit modes
+- Can't programmatically set territories from loaded configs
+
+**Root Cause:** Streamlit widget keys conflicting with session_state management
+
+**Fix (Dec 8, 2025):**
+- Use separate widget keys (`territories_widget` for create, `territories_widget_edit` for edit)
+- Manage `st.session_state.selected_territories` separately from widget key
+- Widget reads defaults from session_state and writes back to it
+
+**Files:** `app.py:1274-1289`, `app.py:1456-1472`
+
+**See:** `MULTI_TERRITORY_SUPPORT_2025_12_08.md` for complete details
+
+### Problem: Nested Hardcoded Value SQL Error
+
+**Symptoms:**
+```
+Using hardcoded value for Channel: '{'hardcoded_value': '{'hardcoded_value': "{'hardcoded_value': 'Nosey'}"}'}'
+SQL compilation error: parse error line 2 at position 182 near '39'
+```
+
+**Root Cause:** When configs are loaded and resaved, the `hardcoded_value` dict gets wrapped in another dict each time:
+- 1st save: `{"hardcoded_value": "Nosey"}`
+- 2nd save: `{"hardcoded_value": {"hardcoded_value": "Nosey"}}`
+- 3rd save: `{"hardcoded_value": {"hardcoded_value": {"hardcoded_value": "Nosey"}}}`
+
+**Fix (Dec 8, 2025):**
+Added recursive unwrapping at `app.py:2652-2654`:
+```python
+while isinstance(hardcoded_value, dict) and 'hardcoded_value' in hardcoded_value:
+    hardcoded_value = hardcoded_value['hardcoded_value']
+```
+
+**Prevention:** The fix automatically handles any level of nesting, so configs can be saved/loaded multiple times without issues.
+
+**Verify Fix:**
+```bash
+# Restart Streamlit to apply the fix
+pkill -f streamlit
+streamlit run app.py
+
+# Try uploading with the previously failing template
+# Should see clean hardcoded values in logs
+```
+
+### Problem: Revenue Data with Currency Formatting
+
+**Symptoms:**
+```
+Error loading data to platform_viewership: Numeric value '$ 0.01' is not recognized
+```
+
+**Root Cause:** Revenue columns contain currency formatting (`$ 0.01`, `$ -`, etc.) that Snowflake cannot parse as numeric values.
+
+**Fix (Dec 8, 2025):**
+
+Two-part solution:
+
+1. **Currency Cleaning** (`src/snowflake_utils.py:745-763`)
+   - Strips `$`, commas, and spaces from revenue values before insert
+   - Converts `-` and empty strings to NULL
+   - Validates numeric conversion
+
+2. **Zero-Revenue Filtering** (`app.py:2475-2492`)
+   - Filters out records with zero or empty revenue BEFORE loading
+   - Records are excluded if revenue is:
+     - NULL/NaN
+     - Empty string
+     - "-"
+     - "0"
+     - "0.0"
+   - Shows message: "Filtered out X zero-revenue records. Loading Y records."
+
+**Impact:** Records with zero revenue (like `$ -`) are now completely excluded from database load, reducing storage and processing overhead.
+
+**Example:**
+```
+Original file: 1000 records (including 50 with revenue "$ -" or "$0.00")
+After filtering: 950 records loaded
+Message: "Filtered out 50 zero-revenue records. Loading 950 records."
+```
+
+---
+
 ## Recent Fixes (December 2025)
+
+### Multi-Territory Support Implementation (Dec 8, 2025)
+
+**Changes:**
+- `COLUMN_MAPPING_CONFIGS.territories` changed from VARCHAR to ARRAY
+- UI changed from single-select to multi-select dropdown
+- Added 5 new territories: Latin America, Sweden, Norway, Denmark, United Kingdom
+- Fixed multiselect caching issue
+- Fixed nested hardcoded_value dictionary bug
+
+**Files:** `app.py`, `src/snowflake_utils.py`
+
+**Documentation:** `MULTI_TERRITORY_SUPPORT_2025_12_08.md`
 
 ### Issue: Date fields going NULL for monthly/quarterly data
 

@@ -116,6 +116,95 @@ Snowflake Delegate → President: Requires Snowflake Governor approval OR 2+ del
 - [ ] What are acceptable query execution times?
 - [ ] When should we use TEMPORARY tables vs. permanent tables?
 
+## Recent Updates
+
+### Revenue Data Handling (Dec 8, 2025)
+
+**Database Write Delegate Enhancement:**
+
+The `load_to_platform_viewership` function in `src/snowflake_utils.py` now includes automatic currency cleaning for REVENUE columns (lines 745-763):
+
+**Currency Cleaning Logic:**
+- Strips dollar signs ($), commas, and spaces from revenue values
+- Converts special cases ("-", empty strings) to NULL
+- Validates numeric conversion before insert
+- Prevents "Numeric value '$ 0.01' is not recognized" errors
+
+**Pre-Database Filtering:**
+- Zero-revenue records (NULL, empty, "-", "0", "0.0") are filtered in Streamlit BEFORE reaching Snowflake
+- This reduces unnecessary data storage and processing overhead
+- Only non-zero revenue records are written to `platform_viewership` table
+
+**Impact on Stored Procedures:**
+- No changes required to existing stored procedures
+- REVENUE column receives clean numeric values or NULL
+- Downstream procedures (NORMALIZE_DATA_IN_STAGING, etc.) work unchanged
+
+**Files Modified:**
+- `src/snowflake_utils.py:745-763` - Currency cleaning logic
+- See Streamlit Governor README for pre-filter logic
+
+### Deal Parent Matching and Territory Handling (Dec 8, 2025)
+
+**Issue:** Records not getting `deal_parent` set when data has specific territory but `active_deals` has NULL territory.
+
+**Root Cause Analysis:**
+
+The `SET_DEAL_PARENT_GENERIC` procedure uses this matching logic:
+```sql
+AND (v.platform_territory IS NULL OR UPPER(v.platform_territory) = UPPER(ad.platform_territory))
+```
+
+**Key Insight:** NULL territories in `active_deals` do NOT act as wildcards for data with specific territories.
+
+**How NULL Matching Works:**
+- Data has NULL territory + active_deals has NULL territory = MATCH ✓
+- Data has NULL territory + active_deals has specific territory = MATCH ✓ (data wildcard)
+- Data has specific territory + active_deals has NULL territory = NO MATCH ✗
+- Data has specific territory + active_deals has matching territory = MATCH ✓
+
+**Example Case:**
+- Pluto data uploaded with `platform_territory = 'Latin America'`
+- active_deals only had entries with `platform_territory = NULL`
+- Procedure returned: "Successfully set deal_parent for 0 records"
+- **Solution:** Created active_deals entry for Pluto with `platform_territory = 'Latin America'`
+- Result: All 120 records matched successfully
+
+**How to Fix Similar Issues:**
+
+1. **Identify Missing Territories:**
+```sql
+SELECT DISTINCT platform_territory
+FROM TEST_STAGING.PUBLIC.platform_viewership
+WHERE platform = 'YourPlatform' AND deal_parent IS NULL
+```
+
+2. **Find Template in active_deals:**
+```sql
+SELECT * FROM DICTIONARY.PUBLIC.active_deals
+WHERE platform = 'YourPlatform' AND platform_territory IS NULL
+```
+
+3. **Create Territory-Specific Entries:**
+```python
+# Use template values, only change platform_territory
+INSERT INTO DICTIONARY.PUBLIC.active_deals (
+    platform, domain, platform_partner_name, platform_channel_name,
+    platform_territory, deal_parent, internal_partner, internal_channel,
+    internal_territory, internal_channel_id, internal_territory_id, active
+) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+# Note: Use %s for Snowflake parameter binding, NOT ?
+```
+
+4. **Re-run Procedure:**
+```sql
+CALL UPLOAD_DB.PUBLIC.SET_DEAL_PARENT_GENERIC('YourPlatform', 'filename.csv')
+```
+
+**Files Involved:**
+- `sql/templates/DEPLOY_ALL_GENERIC_PROCEDURES.sql` - SET_DEAL_PARENT_GENERIC procedure (lines ~40-44)
+- `DICTIONARY.PUBLIC.active_deals` - Configuration table
+
 ## Delegate Knowledge Base
 
 Each delegate will maintain:

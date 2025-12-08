@@ -64,6 +64,7 @@ class SnowflakeConnection:
             partner VARCHAR(255) NOT NULL,
             channel VARCHAR(255),
             territory VARCHAR(255),
+            territories ARRAY,
             domain VARCHAR(255),
             column_mappings VARIANT NOT NULL,
             validation_rules VARIANT,
@@ -79,7 +80,7 @@ class SnowflakeConnection:
             custom_channel_procedure VARCHAR(100),
             custom_date_procedure VARCHAR(100),
             custom_normalizers VARIANT,
-            UNIQUE (platform, partner, channel, territory)
+            CONSTRAINT unique_template_config UNIQUE (platform, partner, channel)
         )
         """
         try:
@@ -108,9 +109,8 @@ class SnowflakeConnection:
             partner,
             channel,
             territory,
+            territories,
             domain,
-            data_type,
-            has_logo,
             column_mappings,
             validation_rules,
             filename_pattern,
@@ -125,7 +125,7 @@ class SnowflakeConnection:
             custom_date_procedure,
             custom_normalizers
         )
-        SELECT %s, %s, %s, %s, %s, %s, %s, %s, PARSE_JSON(%s), PARSE_JSON(%s), %s, PARSE_JSON(%s), %s, PARSE_JSON(%s), %s, %s, %s, %s, %s, %s, PARSE_JSON(%s)
+        SELECT %s, %s, %s, %s, %s, PARSE_JSON(%s), %s, PARSE_JSON(%s), PARSE_JSON(%s), %s, PARSE_JSON(%s), %s, PARSE_JSON(%s), %s, %s, %s, %s, %s, %s, PARSE_JSON(%s)
         """
 
         values = (
@@ -133,10 +133,9 @@ class SnowflakeConnection:
             config_data.get('platform'),
             config_data.get('partner'),
             config_data.get('channel'),  # NULL is allowed for platform-wide configs
-            config_data.get('territory'),  # NULL is allowed for platform-wide configs
+            config_data.get('territory'),  # Keep for backward compatibility
+            json.dumps(config_data.get('territories', [])),  # NEW: Array of territories
             config_data.get('domain'),
-            config_data.get('data_type'),
-            config_data.get('has_logo', False),
             json.dumps(config_data.get('column_mappings', {})),
             json.dumps(config_data.get('validation_rules', {})),
             config_data.get('filename_pattern'),
@@ -167,7 +166,7 @@ class SnowflakeConnection:
         except snowflake.connector.errors.IntegrityError as e:
             print(f"[DEBUG] IntegrityError caught: {str(e)}")
             print(f"[DEBUG] Checking what's in the table...")
-            self.cursor.execute("SELECT platform, partner, channel, territory FROM dictionary.public.viewership_file_formats")
+            self.cursor.execute("SELECT config_id, platform, partner, channel, territory FROM dictionary.public.viewership_file_formats")
             existing = self.cursor.fetchall()
             print(f"[DEBUG] Existing rows in table: {existing}")
             raise Exception(f"Configuration already exists for Platform: {config_data.get('platform')}, Partner: {config_data.get('partner')}")
@@ -191,9 +190,8 @@ class SnowflakeConnection:
             partner = %s,
             channel = %s,
             territory = %s,
+            territories = PARSE_JSON(%s),
             domain = %s,
-            data_type = %s,
-            has_logo = %s,
             column_mappings = PARSE_JSON(%s),
             validation_rules = PARSE_JSON(%s),
             filename_pattern = %s,
@@ -213,10 +211,9 @@ class SnowflakeConnection:
             config_data.get('platform'),
             config_data.get('partner'),
             config_data.get('channel'),  # NULL is allowed for platform-wide configs
-            config_data.get('territory'),  # NULL is allowed for platform-wide configs
+            config_data.get('territory'),  # Keep for backward compatibility
+            json.dumps(config_data.get('territories', [])),  # NEW: Array of territories
             config_data.get('domain'),
-            config_data.get('data_type'),
-            config_data.get('has_logo', False),
             json.dumps(config_data.get('column_mappings', {})),
             json.dumps(config_data.get('validation_rules', {})),
             config_data.get('filename_pattern'),
@@ -278,15 +275,11 @@ class SnowflakeConnection:
             partner,
             channel,
             territory,
-            domain,
-            data_type,
-            has_logo,
             column_mappings,
             validation_rules,
             filename_pattern,
             source_columns,
             target_table,
-            sample_data,
             created_date,
             updated_date,
             created_by,
@@ -294,7 +287,11 @@ class SnowflakeConnection:
             custom_territory_procedure,
             custom_channel_procedure,
             custom_date_procedure,
-            custom_normalizers
+            custom_normalizers,
+            domain,
+            sample_data,
+            data_type,
+            territories
         FROM dictionary.public.viewership_file_formats
         WHERE config_id = %s
         """
@@ -327,15 +324,11 @@ class SnowflakeConnection:
             partner,
             channel,
             territory,
-            domain,
-            data_type,
-            has_logo,
             column_mappings,
             validation_rules,
             filename_pattern,
             source_columns,
             target_table,
-            sample_data,
             created_date,
             updated_date,
             created_by,
@@ -343,7 +336,11 @@ class SnowflakeConnection:
             custom_territory_procedure,
             custom_channel_procedure,
             custom_date_procedure,
-            custom_normalizers
+            custom_normalizers,
+            domain,
+            sample_data,
+            data_type,
+            territories
         FROM dictionary.public.viewership_file_formats
         WHERE LOWER(platform) = LOWER(%s) AND LOWER(partner) = LOWER(%s)
         """
@@ -447,15 +444,17 @@ class SnowflakeConnection:
             print(f"Warning: Could not fetch partners from dictionary.public.partners: {str(e)}")
             return []
 
-    def check_duplicate_config(self, platform: str, partner: str, channel: Optional[str] = None, territory: Optional[str] = None) -> Optional[Dict]:
+    def check_duplicate_config(self, platform: str, partner: str, channel: Optional[str] = None) -> Optional[Dict]:
         """
         Check if exact configuration already exists (matches UNIQUE constraint)
+
+        NOTE: Territory is not checked - new constraint allows same platform/partner/channel
+        with different territories arrays.
 
         Args:
             platform: Platform name (exact match)
             partner: Partner name (exact match)
             channel: Channel name (exact match, NULL if None)
-            territory: Territory name (exact match, NULL if None)
 
         Returns:
             Dictionary with config details if duplicate exists, None otherwise
@@ -463,24 +462,10 @@ class SnowflakeConnection:
         # Handle NULL comparison properly in SQL
         if channel:
             channel_clause = "channel = %s"
-            channel_value = channel
+            params = [platform, partner, channel]
         else:
             channel_clause = "channel IS NULL"
-            channel_value = None
-
-        if territory:
-            territory_clause = "territory = %s"
-            territory_value = territory
-        else:
-            territory_clause = "territory IS NULL"
-            territory_value = None
-
-        # Build params list based on which values are present
-        params = [platform, partner]
-        if channel_value is not None:
-            params.append(channel_value)
-        if territory_value is not None:
-            params.append(territory_value)
+            params = [platform, partner]
 
         select_sql = f"""
         SELECT
@@ -489,14 +474,11 @@ class SnowflakeConnection:
             partner,
             channel,
             territory,
-            domain,
-            data_type,
             column_mappings,
             validation_rules,
             filename_pattern,
             source_columns,
             target_table,
-            sample_data,
             created_date,
             updated_date,
             created_by,
@@ -504,12 +486,15 @@ class SnowflakeConnection:
             custom_territory_procedure,
             custom_channel_procedure,
             custom_date_procedure,
-            custom_normalizers
+            custom_normalizers,
+            domain,
+            sample_data,
+            data_type,
+            territories
         FROM dictionary.public.viewership_file_formats
         WHERE platform = %s
           AND partner = %s
           AND {channel_clause}
-          AND {territory_clause}
         """
 
         try:
@@ -550,14 +535,11 @@ class SnowflakeConnection:
             partner,
             channel,
             territory,
-            domain,
-            data_type,
             column_mappings,
             validation_rules,
             filename_pattern,
             source_columns,
             target_table,
-            sample_data,
             created_date,
             updated_date,
             created_by,
@@ -565,7 +547,11 @@ class SnowflakeConnection:
             custom_territory_procedure,
             custom_channel_procedure,
             custom_date_procedure,
-            custom_normalizers
+            custom_normalizers,
+            domain,
+            sample_data,
+            data_type,
+            territories
         FROM dictionary.public.viewership_file_formats
         WHERE {where_clause}
         ORDER BY platform, partner
@@ -615,15 +601,11 @@ class SnowflakeConnection:
             partner,
             channel,
             territory,
-            domain,
-            data_type,
-            has_logo,
             column_mappings,
             validation_rules,
             filename_pattern,
             source_columns,
             target_table,
-            sample_data,
             created_date,
             updated_date,
             created_by,
@@ -631,7 +613,11 @@ class SnowflakeConnection:
             custom_territory_procedure,
             custom_channel_procedure,
             custom_date_procedure,
-            custom_normalizers
+            custom_normalizers,
+            domain,
+            sample_data,
+            data_type,
+            territories
         FROM dictionary.public.viewership_file_formats
         ORDER BY platform, partner
         """
@@ -650,24 +636,24 @@ class SnowflakeConnection:
             'PLATFORM': row[1],
             'PARTNER': row[2],
             'CHANNEL': row[3],
-            'TERRITORY': row[4],
-            'DOMAIN': row[5],
-            'DATA_TYPE': row[6],
-            'HAS_LOGO': row[7] if row[7] is not None else False,
-            'COLUMN_MAPPINGS': json.loads(row[8]) if isinstance(row[8], str) else row[8],
-            'VALIDATION_RULES': json.loads(row[9]) if row[9] and isinstance(row[9], str) else (row[9] or {}),
-            'FILENAME_PATTERN': row[10],
-            'SOURCE_COLUMNS': json.loads(row[11]) if row[11] and isinstance(row[11], str) else (row[11] or []),
-            'TARGET_TABLE': row[12],
-            'SAMPLE_DATA': json.loads(row[13]) if row[13] and isinstance(row[13], str) else (row[13] or []),
-            'CREATED_DATE': row[14],
-            'UPDATED_DATE': row[15],
-            'CREATED_BY': row[16],
-            'CUSTOM_SANITIZATION_PROCEDURE': row[17],
-            'CUSTOM_TERRITORY_PROCEDURE': row[18],
-            'CUSTOM_CHANNEL_PROCEDURE': row[19],
-            'CUSTOM_DATE_PROCEDURE': row[20],
-            'CUSTOM_NORMALIZERS': json.loads(row[21]) if row[21] and isinstance(row[21], str) else (row[21] or {})
+            'TERRITORY': row[4],  # Keep for backward compatibility
+            'COLUMN_MAPPINGS': json.loads(row[5]) if isinstance(row[5], str) else row[5],
+            'VALIDATION_RULES': json.loads(row[6]) if row[6] and isinstance(row[6], str) else (row[6] or {}),
+            'FILENAME_PATTERN': row[7],
+            'SOURCE_COLUMNS': json.loads(row[8]) if row[8] and isinstance(row[8], str) else (row[8] or []),
+            'TARGET_TABLE': row[9],
+            'CREATED_DATE': row[10],
+            'UPDATED_DATE': row[11],
+            'CREATED_BY': row[12],
+            'CUSTOM_SANITIZATION_PROCEDURE': row[13],
+            'CUSTOM_TERRITORY_PROCEDURE': row[14],
+            'CUSTOM_CHANNEL_PROCEDURE': row[15],
+            'CUSTOM_DATE_PROCEDURE': row[16],
+            'CUSTOM_NORMALIZERS': json.loads(row[17]) if row[17] and isinstance(row[17], str) else (row[17] or {}),
+            'DOMAIN': row[18],
+            'SAMPLE_DATA': json.loads(row[19]) if row[19] and isinstance(row[19], str) else (row[19] or []),
+            'DATA_TYPE': row[20],
+            'TERRITORIES': json.loads(row[21]) if row[21] and isinstance(row[21], str) else (row[21] or [])
         }
 
     def load_to_platform_viewership(self, df, progress_callback=None) -> int:
@@ -756,6 +742,25 @@ class SnowflakeConnection:
                                 formatted_values.append(f"'{val.strftime('%Y-%m-%d %H:%M:%S')}'")
                             else:
                                 formatted_values.append(f"'{str(val)}'")
+                        elif col_name == 'REVENUE':
+                            # Handle revenue - strip currency formatting ($, commas, spaces)
+                            if isinstance(val, str):
+                                # Remove $, spaces, and commas
+                                cleaned_val = val.replace('$', '').replace(',', '').replace(' ', '').strip()
+                                # Handle special cases like "-" or empty
+                                if cleaned_val == '-' or cleaned_val == '':
+                                    formatted_values.append('NULL')
+                                else:
+                                    try:
+                                        # Try to convert to float to validate
+                                        float_val = float(cleaned_val)
+                                        formatted_values.append(str(float_val))
+                                    except:
+                                        # If still not a number, set to NULL
+                                        formatted_values.append('NULL')
+                            else:
+                                # Already numeric
+                                formatted_values.append(str(val))
                         elif isinstance(val, str):
                             # Escape single quotes
                             escaped_val = val.replace("'", "''")

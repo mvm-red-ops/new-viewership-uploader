@@ -25,7 +25,7 @@ The Streamlit Governor owns all aspects of the web application:
 - **Database Write Delegate** - Writing to UPLOAD_DB.platform_viewership
 
 ### User Interface
-- **Form Delegate** - Upload form and dropdowns
+- **Form Delegate** - Upload form and dropdowns (including multi-territory support)
 - **Validation Delegate** - User input validation
 - **Error Display Delegate** - Showing errors and results to user
 
@@ -38,6 +38,44 @@ To be established in Constitutional Convention.
 - Date format auto-detection logic
 - Required vs. optional columns
 - Data validation before upload
+- Territory array handling and validation
+- Template configuration storage format
+
+## Recent Updates
+
+### Multi-Territory Support (Dec 8, 2025)
+**UI Changes:**
+- Territory selection changed from single-select dropdown to multi-select
+- Users can now select multiple territories for a single template
+- Widget state managed separately from session_state to prevent caching issues
+- Widget keys: `territories_widget` (create mode), `territories_widget_edit` (edit mode)
+
+**Available Territories:**
+United States, Canada, India, Mexico, Australia, New Zealand, International, Brazil, Latin America, Sweden, Norway, Denmark, United Kingdom
+
+**Bug Fixes:**
+1. **Multiselect Caching Issue** (app.py:1274-1289, 1456-1472): Fixed by using separate widget keys while managing `st.session_state.selected_territories` separately
+2. **Nested Hardcoded Value Bug** (app.py:1709-1720, 1877-1883, 2652-2654): Fixed by unwrapping nested `hardcoded_value` dictionaries BEFORE saving (preventing accumulation) and on load (cleaning existing nested values). This prevents configs from accumulating wrapper layers each time they're saved.
+
+**Database Changes:**
+- `COLUMN_MAPPING_CONFIGS.territories` changed from VARCHAR to ARRAY
+- Unique constraint updated to `(platform, partner, channel, territories)`
+
+### Revenue Data Handling (Dec 8, 2025)
+**Data Cleaning:**
+- Revenue columns with currency formatting (`$ 0.01`, `$ -`, etc.) are now automatically cleaned before upload
+- Currency symbols ($), commas, and spaces are stripped during transformation (app.py:2479-2481)
+
+**Zero-Revenue Filtering:**
+- Records with zero or empty revenue are filtered out BEFORE database load (app.py:2475-2492)
+- Filtered values include: NULL, empty string, "-", "0", "0.0"
+- User feedback shows: "Filtered out X zero-revenue records. Loading Y records."
+- This reduces storage and processing overhead for revenue-based uploads
+
+**Impact:**
+- Pluto LatAm and similar revenue files with `$ -` values now upload successfully
+- Only non-zero revenue records are loaded to database
+- No more "Numeric value '$ 0.01' is not recognized" errors
 
 ## Communication Protocol
 
