@@ -123,9 +123,10 @@ class SnowflakeConnection:
             custom_territory_procedure,
             custom_channel_procedure,
             custom_date_procedure,
-            custom_normalizers
+            custom_normalizers,
+            data_type
         )
-        SELECT %s, %s, %s, %s, %s, PARSE_JSON(%s), %s, PARSE_JSON(%s), PARSE_JSON(%s), %s, PARSE_JSON(%s), %s, PARSE_JSON(%s), %s, %s, %s, %s, %s, %s, PARSE_JSON(%s)
+        SELECT %s, %s, %s, %s, %s, PARSE_JSON(%s), %s, PARSE_JSON(%s), PARSE_JSON(%s), %s, PARSE_JSON(%s), %s, PARSE_JSON(%s), %s, %s, %s, %s, %s, %s, PARSE_JSON(%s), %s
         """
 
         values = (
@@ -148,7 +149,8 @@ class SnowflakeConnection:
             config_data.get('custom_territory_procedure'),
             config_data.get('custom_channel_procedure'),
             config_data.get('custom_date_procedure'),
-            json.dumps(config_data.get('custom_normalizers', {}))
+            json.dumps(config_data.get('custom_normalizers', {})),
+            config_data.get('data_type')
         )
 
         try:
@@ -203,7 +205,8 @@ class SnowflakeConnection:
             custom_territory_procedure = %s,
             custom_channel_procedure = %s,
             custom_date_procedure = %s,
-            custom_normalizers = PARSE_JSON(%s)
+            custom_normalizers = PARSE_JSON(%s),
+            data_type = %s
         WHERE config_id = %s
         """
 
@@ -226,6 +229,7 @@ class SnowflakeConnection:
             config_data.get('custom_channel_procedure'),
             config_data.get('custom_date_procedure'),
             json.dumps(config_data.get('custom_normalizers', {})),
+            config_data.get('data_type'),
             config_id
         )
 
