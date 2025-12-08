@@ -80,9 +80,23 @@ See: `LAMBDA_FIX_REF_ID.md` in root directory.
 - `ref_id` - Internal reference ID (matched from platform_content_id)
 - `asset_series`, `asset_title` - Matched asset metadata
 - `content_provider` - Content owner
-- `deal_parent`, `partner`, `channel`, `territory` - Business dimensions
+- `deal_parent`, `partner`, `channel` - Business dimensions
+- `territory` - **ARRAY** Business territory (supports multiple territories per record)
 - `tot_hov`, `tot_mov` - Total hours/minutes of viewing
 - `date`, `week`, `day`, `quarter`, `year`, `month` - Time dimensions
+
+### COLUMN_MAPPING_CONFIGS Table
+**Purpose**: Stores template configurations for platform uploads
+
+**Key Columns**:
+- `platform`, `partner`, `channel` - Configuration identifiers
+- `territories` - **ARRAY** Multiple territories supported by this config
+- `has_logo` - Boolean flag for logo detection
+- `column_mappings` - VARIANT JSON containing field mappings
+
+**Unique Constraint**: `(platform, partner, channel, territories)` - Prevents duplicate configs
+
+**Multi-Territory Support (Dec 2025)**: The `territories` column stores arrays like `['United States', 'Canada']`, allowing a single template to support multiple territories. The unique constraint ensures no duplicate configs exist for the same platform/partner/channel/territories combination.
 
 ## Current State (Dec 2025)
 
@@ -95,3 +109,9 @@ See: `LAMBDA_FIX_REF_ID.md` in root directory.
 - Old platform-specific tables deprecated
 - All new uploads use `platform_viewership` table
 - Generic procedures handle all platforms via `platform` parameter
+
+**Multi-Territory Support**: ✅ Complete (Dec 8, 2025)
+- `COLUMN_MAPPING_CONFIGS.territories` changed from VARCHAR to ARRAY
+- Unique constraint updated to include territories array
+- UI supports multi-select for territory selection
+- Available territories: United States, Canada, India, Mexico, Australia, New Zealand, International, Brazil, Latin America, Sweden, Norway, Denmark, United Kingdom
