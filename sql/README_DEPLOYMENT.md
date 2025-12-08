@@ -176,3 +176,39 @@ snowflake/stored_procedures/-sub-procedures/content_references/generic/
 ```
 
 These are combined into `DEPLOY_GENERIC_CONTENT_REFERENCES.sql` for easy deployment.
+
+## CRITICAL: Deployment Process
+
+**⚠️ IMPORTANT: Individual procedure files in `snowflake/stored_procedures/` are NOT automatically deployed!**
+
+The deployment uses **template files** in `sql/templates/`:
+- `DEPLOY_ALL_GENERIC_PROCEDURES.sql` - Contains ALL main procedures inline
+- `DEPLOY_GENERIC_CONTENT_REFERENCES.sql` - Contains ALL content reference sub-procedures inline
+
+**To deploy changes:**
+
+1. **Make changes in the template files directly** (sql/templates/*.sql)
+   - OR regenerate templates from individual files (if you have a script)
+
+2. **Use the deployment script:**
+   ```bash
+   # Deploy to staging
+   python3 sql/deploy/deploy.py --env staging
+
+   # Deploy to production
+   python3 sql/deploy/deploy.py --env prod
+   ```
+
+3. **The script automatically replaces template variables:**
+   - `{{UPLOAD_DB}}` → UPLOAD_DB (staging) or UPLOAD_DB_PROD (prod)
+   - `{{STAGING_DB}}` → TEST_STAGING (staging) or NOSEY_PROD (prod)
+   - `{{METADATA_DB}}` → METADATA_MASTER_CLEANED_STAGING or METADATA_MASTER
+   - `{{ASSETS_DB}}` → STAGING_ASSETS or ASSETS
+
+**DO NOT:**
+- ❌ Manually deploy individual procedure files - they won't have template variables replaced
+- ❌ Edit procedures directly in Snowflake - changes will be overwritten on next deploy
+- ❌ Hardcode database names - always use template variables like {{STAGING_DB}}
+
+**Configuration:**
+- See `sql/deploy/config.yaml` for deployment order and environment settings

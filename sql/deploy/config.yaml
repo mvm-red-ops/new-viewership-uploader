@@ -8,16 +8,16 @@ environments:
   staging:
     UPLOAD_DB: "UPLOAD_DB"
     STAGING_DB: "TEST_STAGING"
-    ASSETS_DB: "STAGING_ASSETS"
+    ASSETS_DB: "STAGING_ASSETS.PUBLIC.EPISODE_DETAILS_TEST_STAGING"
     EPISODE_DETAILS_TABLE: "EPISODE_DETAILS_TEST_STAGING"
-    METADATA_DB: "METADATA_MASTER_CLEANED_STAGING"
+    METADATA_DB: "METADATA_MASTER_CLEANED_STAGING.PUBLIC"
 
   prod:
     UPLOAD_DB: "UPLOAD_DB_PROD"
     STAGING_DB: "NOSEY_PROD"
-    ASSETS_DB: "ASSETS"
+    ASSETS_DB: "ASSETS.PUBLIC.EPISODE_DETAILS"
     EPISODE_DETAILS_TABLE: "EPISODE_DETAILS"
-    METADATA_DB: "METADATA_MASTER"
+    METADATA_DB: "METADATA_MASTER.PUBLIC"
 
 # ==============================================================================
 # Migration Files (executed in order)
@@ -40,6 +40,11 @@ migrations:
     file: "templates/DEPLOY_GENERIC_CONTENT_REFERENCES.sql"
     required: true
     description: "Uses existing template file"
+
+  - name: "Bucket Procedures (6 asset matching procedures)"
+    file: "templates/DEPLOY_BUCKET_PROCEDURES.sql"
+    required: true
+    description: "All 6 bucket procedures for asset matching"
 
   - name: "Validation Procedures"
     file: "templates/CREATE_VALIDATE_VIEWERSHIP_FOR_INSERT.sql"

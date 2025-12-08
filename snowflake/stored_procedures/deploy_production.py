@@ -11,18 +11,17 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '../..'))
 import snowflake.connector
 from config import load_snowflake_config
 
-def deploy_file(cursor, file_path, env="production"):
-    """Deploy a single SQL file (handles multi-statement files)"""
+def deploy_file(conn, cursor, file_path, env="production"):
+    """Deploy a single SQL file (handles multi-statement files with $$ delimiters)"""
     with open(file_path, 'r') as f:
         sql = f.read()
 
     try:
         cursor.execute('USE DATABASE UPLOAD_DB_PROD')
 
-        # Split by semicolons and execute each statement
-        statements = [s.strip() for s in sql.split(';') if s.strip()]
-        for statement in statements:
-            cursor.execute(statement)
+        # Use execute_string to handle multiple statements (CREATE + GRANT)
+        for result in conn.execute_string(sql):
+            pass
 
         return True, None
     except Exception as e:
@@ -72,7 +71,7 @@ def main():
 
     for sql_file in sql_files:
         proc_name = os.path.basename(sql_file).replace('.sql', '')
-        success, error = deploy_file(cursor, sql_file)
+        success, error = deploy_file(conn, cursor, sql_file)
 
         if success:
             print(f"✓ {proc_name}")

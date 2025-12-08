@@ -1,12 +1,12 @@
 # Troubleshooting Guide
 
-This document captures common issues and their solutions to avoid re-explaining the same problems.
+Common issues and solutions for the viewership upload system.
 
 ## Table of Contents
 - [Git / Deployment Issues](#git--deployment-issues)
 - [Date Parsing Issues](#date-parsing-issues)
-- [Snowflake Stored Procedures](#snowflake-stored-procedures)
 - [Data Pipeline Issues](#data-pipeline-issues)
+- [Recent Fixes (December 2025)](#recent-fixes-december-2025)
 
 ---
 
@@ -310,6 +310,41 @@ cd sql
 
 ---
 
+## Recent Fixes (December 2025)
+
+### Issue: Date fields going NULL for monthly/quarterly data
+
+**Symptoms:**
+- Tubi VOD or similar monthly aggregated data shows NULL for year, month, quarter
+- Data appears correct initially but gets cleared during normalization
+
+**Fixed:** December 2, 2025
+- Updated `SET_DATE_COLUMNS_DYNAMIC` to handle NULL date fields
+- Now checks if date column has data before trying to derive from it
+- For monthly/quarterly data, uses month/year directly instead
+
+**Files:** `snowflake/stored_procedures/generic/set_date_columns_dynamic.sql`
+
+### Issue: asset_series not being set for REF_ID_SERIES bucket
+
+**Symptoms:**
+- Records have ref_id and internal_series populated
+- REF_ID_SERIES bucket shows 0 updates
+- asset_series, content_provider, series_code remain NULL
+
+**Root Cause:** Deployed procedure was missing UNION fallback query
+
+**Fixed:** December 2, 2025
+- Redeployed complete `ref_id_series.sql` with UNION fallback
+- First tries strict title matching, then falls back to ref_id + series matching
+- Handles cases where platform content names don't exactly match metadata titles
+
+**Files:** `snowflake/stored_procedures/-sub-procedures/content_references/generic/ref_id_series.sql`
+
+**See:** `docs/FIXES_2025_12_02.md` for complete details
+
+---
+
 ## Getting Help
 
 When asking for help, include:
@@ -323,3 +358,7 @@ When asking for help, include:
    - Database queries showing the issue
 
 This helps avoid re-explaining context every time.
+
+For recent fixes and deployment procedures, see:
+- `docs/FIXES_2025_12_02.md` - Latest fixes documentation
+- `docs/DEPLOYMENT_GUIDE.md` - How to deploy procedures

@@ -54,7 +54,10 @@ GRANT USAGE ON PROCEDURE {{UPLOAD_DB}}.PUBLIC.set_internal_series_generic(VARCHA
 GRANT USAGE ON PROCEDURE {{UPLOAD_DB}}.PUBLIC.analyze_and_process_viewership_data_generic(VARCHAR, VARCHAR) TO ROLE WEB_APP;
 GRANT USAGE ON PROCEDURE {{UPLOAD_DB}}.PUBLIC.move_data_to_final_table_dynamic_generic(VARCHAR, VARCHAR, VARCHAR) TO ROLE WEB_APP;
 GRANT USAGE ON PROCEDURE {{UPLOAD_DB}}.PUBLIC.handle_final_insert_dynamic_generic(VARCHAR, VARCHAR, VARCHAR) TO ROLE WEB_APP;
-GRANT USAGE ON PROCEDURE {{UPLOAD_DB}}.PUBLIC.validate_viewership_for_insert(VARCHAR, VARCHAR) TO ROLE WEB_APP;
+GRANT USAGE ON PROCEDURE {{UPLOAD_DB}}.PUBLIC.validate_viewership_for_insert(VARCHAR, VARCHAR, VARCHAR) TO ROLE WEB_APP;
+GRANT USAGE ON PROCEDURE {{UPLOAD_DB}}.PUBLIC.move_streamlit_data_to_staging(VARCHAR, VARCHAR) TO ROLE WEB_APP;
+GRANT USAGE ON PROCEDURE {{UPLOAD_DB}}.PUBLIC.normalize_data_in_staging(VARCHAR, VARCHAR) TO ROLE WEB_APP;
+GRANT USAGE ON PROCEDURE {{UPLOAD_DB}}.PUBLIC.set_ref_id_from_platform_content_id(VARCHAR, VARCHAR) TO ROLE WEB_APP;
 
 -- ==============================================================================
 -- Add more permissions as needed

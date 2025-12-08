@@ -9,24 +9,31 @@
 --   2. Then run this file SECOND (DEPLOY_ALL_GENERIC_PROCEDURES.sql)
 --
 -- Procedures in this file:
+-- PHASE 0/1: STREAMLIT DATA MOVEMENT
+--   1. move_streamlit_data_to_staging - Copies data from upload_db to staging_db (includes duplicate prevention)
+--   2. normalize_data_in_staging - Orchestrates Phase 1 normalization
+--
 -- SHARED:
---   1. set_phase_generic - Updates phase for records
---   2. calculate_viewership_metrics - Calculates missing TOT_HOV/TOT_MOV
---   3. set_date_columns_dynamic - Sets all date columns (full_date, week, quarter, year, month, year_month_day, day)
---   4. handle_viewership_conflicts - Tracks unmatched records into flagged_metadata (called from each bucket)
+--   3. set_phase_generic - Updates phase for records
+--   4. calculate_viewership_metrics - Calculates missing TOT_HOV/TOT_MOV
+--   5. set_date_columns_dynamic - Sets all date columns (full_date, week, quarter, year, month, year_month_day, day)
+--   6. handle_viewership_conflicts - Tracks unmatched records into flagged_metadata (called from each bucket)
+--
+-- PHASE 1:
+--   7. set_deal_parent_generic - Primary: Sets all normalized fields from active_deals
+--   8. set_channel_generic - Fallback: Pattern matching for channel
+--   9. set_territory_generic - Fallback: Normalizes territory names
+--   10. send_unmatched_deals_alert - Sends email for unmatched records
+--   11. set_internal_series_generic - Matches platform series to internal dictionary
+--   12. set_ref_id_from_platform_content_id - Maps platform_content_id to ref_id
 --
 -- PHASE 2:
---   5. set_deal_parent_generic - Primary: Sets all normalized fields from active_deals
---   6. set_channel_generic - Fallback: Pattern matching for channel
---   7. set_territory_generic - Fallback: Normalizes territory names
---   8. send_unmatched_deals_alert - Sends email for unmatched records
---   9. set_internal_series_generic - Matches platform series to internal dictionary
---   10. analyze_and_process_viewership_data_generic - Orchestrates bucket-based asset matching
+--   13. analyze_and_process_viewership_data_generic - Orchestrates bucket-based asset matching
 --       (calls sub-procedures from DEPLOY_GENERIC_CONTENT_REFERENCES.sql)
 --
 -- PHASE 3:
---   11. move_data_to_final_table_dynamic_generic - Moves data to final table
---   12. handle_final_insert_dynamic_generic - Orchestrates Phase 3
+--   14. move_data_to_final_table_dynamic_generic - Moves data to final table
+--   15. handle_final_insert_dynamic_generic - Orchestrates Phase 3
 --
 -- ==============================================================================
 
@@ -102,6 +109,27 @@ try {
     const jsPhaseNumber = PHASE_NUMBER;
     const lowerFilename = FILENAME.toLowerCase();
 
+    console.log(`SET_PHASE_GENERIC: Setting phase to ${jsPhaseNumber} for ${upperPlatform} - ${lowerFilename}`);
+
+    // First check how many records exist
+    var checkQuery = `
+        SELECT COUNT(*) as total,
+               SUM(CASE WHEN processed IS NULL THEN 1 ELSE 0 END) as unprocessed,
+               SUM(CASE WHEN processed IS NOT NULL THEN 1 ELSE 0 END) as processed_count
+        FROM {{STAGING_DB}}.public.platform_viewership
+        WHERE UPPER(platform) = '${upperPlatform}'
+          AND LOWER(filename) = '${lowerFilename}'
+    `;
+
+    var checkStmt = snowflake.createStatement({sqlText: checkQuery});
+    var checkResult = checkStmt.execute();
+    checkResult.next();
+    var totalRecords = checkResult.getColumnValue('TOTAL');
+    var unprocessedRecords = checkResult.getColumnValue('UNPROCESSED');
+    var processedRecords = checkResult.getColumnValue('PROCESSED_COUNT');
+
+    console.log(`Found ${totalRecords} total records (${unprocessedRecords} unprocessed, ${processedRecords} processed)`);
+
     // Update phase for all unprocessed records matching platform and filename
     var sql_command = `
         UPDATE {{STAGING_DB}}.public.platform_viewership
@@ -117,6 +145,9 @@ try {
     });
 
     var result = statement.execute();
+    var rowsAffected = statement.getNumRowsAffected();
+
+    console.log(`Updated ${rowsAffected} rows to phase ${jsPhaseNumber}`);
 
     // Get the number of rows updated
     var rowCountQuery = `
@@ -666,6 +697,114 @@ try {
 $$;
 
 GRANT USAGE ON PROCEDURE {{UPLOAD_DB}}.public.set_deal_parent_generic(VARCHAR, VARCHAR) TO ROLE web_app;
+
+-- ==============================================================================
+-- PHASE 1 PROCEDURE: SET_REF_ID_FROM_PLATFORM_CONTENT_ID
+-- ==============================================================================
+-- Set ref_id from platform_content_id by matching against known ref_ids in metadata
+-- This procedure checks if platform_content_id contains a valid ref_id and copies it to the ref_id column
+-- ==============================================================================
+
+CREATE OR REPLACE PROCEDURE {{UPLOAD_DB}}.PUBLIC.SET_REF_ID_FROM_PLATFORM_CONTENT_ID(
+    platform STRING,
+    filename STRING
+)
+RETURNS STRING
+LANGUAGE JAVASCRIPT
+EXECUTE AS CALLER
+AS
+$$
+try {
+    const platformArg = PLATFORM;
+    const filenameArg = FILENAME;
+
+    console.log(`Setting ref_id from platform_content_id for ${platformArg} - ${filenameArg}`);
+
+    // Step 1: Get all unique ref_ids from metadata
+    // Using episode table as it has all the ref_ids we care about
+    const getRefIdsSql = `
+        SELECT DISTINCT ref_id
+        FROM {{METADATA_DB}}.public.episode
+        WHERE ref_id IS NOT NULL
+          AND TRIM(ref_id) != ''
+    `;
+
+    console.log('Fetching all known ref_ids from metadata...');
+    const refIdsResult = snowflake.execute({sqlText: getRefIdsSql});
+
+    // Store ref_ids in an array
+    const refIds = [];
+    while (refIdsResult.next()) {
+        refIds.push(refIdsResult.getColumnValue('REF_ID'));
+    }
+
+    console.log(`Found ${refIds.length} unique ref_ids in metadata`);
+
+    if (refIds.length === 0) {
+        return `No ref_ids found in metadata - skipping ref_id mapping`;
+    }
+
+    // Step 2: Update records where platform_content_id contains a known ref_id
+    // We need to check if platform_content_id CONTAINS any of the known ref_ids
+    // and extract the matching ref_id
+
+    console.log('Updating ref_id column where platform_content_id contains known ref_ids...');
+
+    let totalRowsUpdated = 0;
+
+    // Process in batches to avoid SQL statement size limits
+    const batchSize = 1000;
+    for (let i = 0; i < refIds.length; i += batchSize) {
+        const batch = refIds.slice(i, i + batchSize);
+
+        // Create CASE statement to match and extract ref_ids
+        const caseStatements = batch.map(refId => {
+            const escapedRefId = refId.replace(/'/g, "''");
+            return `WHEN CONTAINS(platform_content_id, '${escapedRefId}') THEN '${escapedRefId}'`;
+        }).join('\n            ');
+
+        const updateSql = `
+            UPDATE {{STAGING_DB}}.public.platform_viewership
+            SET ref_id = CASE
+                ${caseStatements}
+            END
+            WHERE UPPER(platform) = '${platformArg.toUpperCase()}'
+              AND LOWER(filename) = '${filenameArg.toLowerCase()}'
+              AND platform_content_id IS NOT NULL
+              AND TRIM(platform_content_id) != ''
+              AND (ref_id IS NULL OR TRIM(ref_id) = '')
+              AND (${batch.map(refId => `CONTAINS(platform_content_id, '${refId.replace(/'/g, "''")}')`).join(' OR ')})
+        `;
+
+        const updateResult = snowflake.execute({sqlText: updateSql});
+        const rowsUpdated = updateResult.getNumRowsAffected();
+        totalRowsUpdated += rowsUpdated;
+
+        console.log(`Processed batch ${Math.floor(i / batchSize) + 1}: ${rowsUpdated} rows updated`);
+    }
+
+    console.log(`✅ Set ref_id for ${totalRowsUpdated} records from platform_content_id`);
+    return `Successfully set ref_id for ${totalRowsUpdated} records matching known ref_ids`;
+
+} catch (err) {
+    const errorMessage = "Error in set_ref_id_from_platform_content_id: " + err.message;
+    console.error(errorMessage);
+
+    // Log the error
+    try {
+        snowflake.execute({
+            sqlText: "INSERT INTO {{UPLOAD_DB}}.PUBLIC.ERROR_LOG_TABLE (LOG_MESSAGE, PROCEDURE_NAME, PLATFORM) VALUES (?, ?, ?)",
+            binds: [errorMessage, 'set_ref_id_from_platform_content_id', PLATFORM]
+        });
+    } catch (logErr) {
+        console.error("Failed to log error: " + logErr.message);
+    }
+
+    throw new Error(errorMessage);
+}
+$$;
+
+GRANT USAGE ON PROCEDURE {{UPLOAD_DB}}.PUBLIC.SET_REF_ID_FROM_PLATFORM_CONTENT_ID(STRING, STRING) TO ROLE web_app;
 
 -- ==============================================================================
 -- PHASE 2 PROCEDURE 2: set_channel_generic (Fallback)
@@ -1973,6 +2112,205 @@ $$
 $$;
 
 GRANT USAGE ON PROCEDURE {{UPLOAD_DB}}.public.handle_final_insert_dynamic_generic(STRING, STRING, STRING) TO ROLE web_app;
+
+-- ==============================================================================
+-- PHASE 0/1: STREAMLIT DATA MOVEMENT AND NORMALIZATION
+-- ==============================================================================
+
+-- ==============================================================================
+-- PROCEDURE: MOVE_STREAMLIT_DATA_TO_STAGING
+-- ==============================================================================
+-- Moves data from upload_db to staging_db for Streamlit uploads
+-- Includes DELETE before INSERT to prevent duplicates on retry
+-- ==============================================================================
+
+CREATE OR REPLACE PROCEDURE {{UPLOAD_DB}}.PUBLIC.MOVE_STREAMLIT_DATA_TO_STAGING(
+    platform STRING,
+    filename STRING
+)
+RETURNS STRING
+LANGUAGE JAVASCRIPT
+EXECUTE AS CALLER
+AS
+$$
+let sql_command = "";
+try {
+    const upperPlatform = PLATFORM.toUpperCase();
+    const lowerFilename = FILENAME.toLowerCase();
+
+    // Step 1: Get all column names from the upload table dynamically
+    sql_command = `
+        SELECT COLUMN_NAME
+        FROM {{UPLOAD_DB}}.INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = 'PUBLIC'
+          AND TABLE_NAME = 'PLATFORM_VIEWERSHIP'
+          AND TABLE_CATALOG = '{{UPLOAD_DB}}'
+        ORDER BY ORDINAL_POSITION;
+    `;
+
+    var stmt = snowflake.createStatement({sqlText: sql_command});
+    var colsResult = stmt.execute();
+    var columns = [];
+
+    while (colsResult.next()) {
+        columns.push(colsResult.getColumnValue(1));
+    }
+
+    if (columns.length === 0) {
+        throw new Error("No columns found in {{UPLOAD_DB}}.public.platform_viewership table");
+    }
+
+    // Remove LOAD_TIMESTAMP if it exists (will be auto-generated in target table)
+    columns = columns.filter(col => col.toUpperCase() !== 'LOAD_TIMESTAMP');
+
+    console.log(`Found ${columns.length} columns to copy`);
+
+    // Step 2: Delete any existing records for this filename in staging (prevents duplicates on retry)
+    sql_command = `
+        DELETE FROM {{STAGING_DB}}.public.platform_viewership
+        WHERE UPPER(platform) = '${upperPlatform}'
+          AND LOWER(filename) = '${lowerFilename}';
+    `;
+
+    console.log("Deleting existing records:", sql_command);
+
+    var deleteStmt = snowflake.createStatement({sqlText: sql_command});
+    deleteStmt.execute();
+    var rowsDeleted = deleteStmt.getNumRowsAffected();
+
+    console.log(`✓ Deleted ${rowsDeleted} existing rows from staging`);
+
+    // Step 3: Construct and execute the INSERT INTO SELECT query
+    // For Streamlit, data has no phase yet and processed is NULL/FALSE
+    sql_command = `
+        INSERT INTO {{STAGING_DB}}.public.platform_viewership (${columns.join(", ")})
+        SELECT ${columns.join(", ")}
+        FROM {{UPLOAD_DB}}.public.platform_viewership
+        WHERE UPPER(platform) = '${upperPlatform}'
+          AND LOWER(filename) = '${lowerFilename}'
+          AND (processed IS NULL OR processed = FALSE)
+          AND (phase IS NULL OR phase = '');
+    `;
+
+    console.log("Streamlit - Move data SQL:", sql_command);
+
+    var insertStmt = snowflake.createStatement({sqlText: sql_command});
+    var insertResult = insertStmt.execute();
+    var rowsInserted = insertStmt.getNumRowsAffected();
+
+    console.log(`✓ Data copied to staging: ${rowsInserted} rows`);
+
+    // Step 4: Set phase to 0 (initial load complete)
+    sql_command = `
+        UPDATE {{STAGING_DB}}.public.platform_viewership
+        SET phase = '0'
+        WHERE UPPER(platform) = '${upperPlatform}'
+          AND LOWER(filename) = '${lowerFilename}'
+          AND (phase IS NULL OR phase = '');
+    `;
+
+    console.log("Setting phase to 0:", sql_command);
+
+    var updateStmt = snowflake.createStatement({sqlText: sql_command});
+    updateStmt.execute();
+    var rowsUpdated = updateStmt.getNumRowsAffected();
+
+    console.log(`✓ Phase set to 0: ${rowsUpdated} rows updated`);
+
+    return `Data copied successfully. ${rowsInserted} rows moved from {{UPLOAD_DB}} to {{STAGING_DB}} for ${PLATFORM} - ${FILENAME}. Phase set to 0 for ${rowsUpdated} rows.`;
+} catch (err) {
+    const errorMessage = "Error in move_streamlit_data_to_staging: " + err.message;
+
+    // Log the error
+    snowflake.execute({
+        sqlText: "INSERT INTO {{UPLOAD_DB}}.public.error_log_table (log_message, procedure_name, platform, query_text) VALUES (?, ?, ?, ?)",
+        binds: [errorMessage, 'move_streamlit_data_to_staging', PLATFORM, sql_command]
+    });
+
+    throw new Error(errorMessage);
+}
+$$;
+
+GRANT USAGE ON PROCEDURE {{UPLOAD_DB}}.PUBLIC.MOVE_STREAMLIT_DATA_TO_STAGING(STRING, STRING) TO ROLE web_app;
+
+-- ==============================================================================
+-- PROCEDURE: NORMALIZE_DATA_IN_STAGING
+-- ==============================================================================
+-- Orchestrates Phase 1 normalization for Streamlit uploads
+-- Calls all normalization sub-procedures in sequence
+-- ==============================================================================
+
+CREATE OR REPLACE PROCEDURE {{UPLOAD_DB}}.PUBLIC.NORMALIZE_DATA_IN_STAGING(
+    platform STRING,
+    filename STRING
+)
+RETURNS STRING
+LANGUAGE JAVASCRIPT
+EXECUTE AS CALLER
+AS
+$$
+    const platformArg = PLATFORM;
+    const filenameArg = FILENAME;
+
+    try {
+        console.log(`Starting normalization for ${platformArg} - ${filenameArg}`);
+
+        // Step 1: Set deal_parent (also sets partner, channel, territory, channel_id, territory_id)
+        console.log('Step 1: Setting deal_parent...');
+        snowflake.execute({
+            sqlText: `CALL {{UPLOAD_DB}}.PUBLIC.SET_DEAL_PARENT_GENERIC(?, ?)`,
+            binds: [platformArg, filenameArg]
+        });
+
+        // Step 2: Set ref_id from platform_content_id where applicable
+        console.log('Step 2: Setting ref_id from platform_content_id...');
+        snowflake.execute({
+            sqlText: `CALL {{UPLOAD_DB}}.PUBLIC.SET_REF_ID_FROM_PLATFORM_CONTENT_ID(?, ?)`,
+            binds: [platformArg, filenameArg]
+        });
+
+        // Step 3: Calculate viewership metrics (TOT_MOV from TOT_HOV or vice versa)
+        console.log('Step 3: Calculating viewership metrics...');
+        snowflake.execute({
+            sqlText: `CALL {{UPLOAD_DB}}.PUBLIC.CALCULATE_VIEWERSHIP_METRICS(?, ?)`,
+            binds: [platformArg, filenameArg]
+        });
+
+        // Step 4: Set date columns (week, day, quarter, year, month)
+        console.log('Step 4: Setting date columns...');
+        snowflake.execute({
+            sqlText: `CALL {{UPLOAD_DB}}.PUBLIC.SET_DATE_COLUMNS_DYNAMIC(?, ?)`,
+            binds: [platformArg, filenameArg]
+        });
+
+        // Step 5: Set phase to 1
+        console.log('Step 5: Setting phase to 1...');
+        snowflake.execute({
+            sqlText: `CALL {{UPLOAD_DB}}.PUBLIC.SET_PHASE_GENERIC(?, ?, ?)`,
+            binds: [platformArg, 1, filenameArg]
+        });
+
+        console.log(`✅ Normalization completed for ${platformArg} - ${filenameArg}`);
+        return `Normalization completed successfully for ${platformArg} - ${filenameArg}`;
+
+    } catch (err) {
+        const errorMessage = "Error in normalize_data_in_staging: " + err.message;
+
+        // Log the error
+        try {
+            snowflake.execute({
+                sqlText: "INSERT INTO {{UPLOAD_DB}}.PUBLIC.ERROR_LOG_TABLE (LOG_MESSAGE, PROCEDURE_NAME, PLATFORM) VALUES (?, ?, ?)",
+                binds: [errorMessage, 'normalize_data_in_staging', platformArg]
+            });
+        } catch (logErr) {
+            console.error("Failed to log error: " + logErr.message);
+        }
+
+        throw new Error(errorMessage);
+    }
+$$;
+
+GRANT USAGE ON PROCEDURE {{UPLOAD_DB}}.PUBLIC.NORMALIZE_DATA_IN_STAGING(STRING, STRING) TO ROLE web_app;
 
 -- ==============================================================================
 -- DEPLOYMENT COMPLETE
