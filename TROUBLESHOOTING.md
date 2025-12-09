@@ -506,6 +506,69 @@ Message: "Filtered out 50 zero-revenue records. Loading 950 records."
 
 ## Recent Fixes (December 2025)
 
+### YYYYMMDD Date Format Parsing Issue (Dec 8, 2025)
+
+**Problem:** Dates in YYYYMMDD format (e.g., "20250701") weren't being parsed correctly, resulting in year=1970 in database.
+
+**Symptoms:**
+- Query for Q3 2025 returns no results
+- Records show year=1970 instead of correct year
+- CSV contains dates like "20250701" (July 1, 2025)
+- Dates appear as 1970-08-23 (Unix epoch) in database
+
+**Root Cause:**
+Two-part issue:
+1. Streamlit date parsing didn't explicitly handle 8-digit YYYYMMDD format
+2. When parsing failed, Snowflake defaulted to Unix epoch (1970-08-23)
+3. SET_DATE_COLUMNS_DYNAMIC extracted year=1970 from these bad dates
+
+**Fix Applied (Dec 8, 2025):**
+
+**Part 1: Enhanced Streamlit Date Parsing** (`src/snowflake_utils.py:716-738`)
+```python
+# Try YYYYMMDD format first (common in exports)
+if len(val) == 8 and val.isdigit():
+    parsed_date = pd.to_datetime(val, format='%Y%m%d', errors='coerce')
+
+# If specific format didn't work, use general parsing
+if parsed_date is None or pd.isna(parsed_date):
+    parsed_date = pd.to_datetime(val)
+```
+
+**Part 2: Protected SET_DATE_COLUMNS** (stored procedure lines 18-28)
+```javascript
+// Only use date column if it has valid data (year >= 2000)
+var checkDateQuery = `
+    SELECT COUNT(*) as cnt
+    FROM TEST_STAGING.public.platform_viewership
+    WHERE platform = ''${platform}''
+      AND filename = ''${filename}''
+      AND date IS NOT NULL
+      AND TRIM(date) != ''''
+      AND YEAR(TRY_CAST(date AS DATE)) >= 2000  // ← ADDED
+`;
+```
+
+**Impact:**
+- Future uploads with YYYYMMDD dates will parse correctly
+- Protection against bad dates overwriting correct year/quarter values
+- All existing date formats continue to work
+
+**Files Modified:**
+- `src/snowflake_utils.py:716-738` - YYYYMMDD date parsing
+- `snowflake/stored_procedures/staging/generic/set_date_columns_dynamic.sql:18-28`
+- `snowflake/stored_procedures/production/generic/set_date_columns_dynamic.sql:18-28`
+
+**Verification:**
+```python
+# Test YYYYMMDD parsing
+import pandas as pd
+val = "20250701"
+if len(val) == 8 and val.isdigit():
+    parsed = pd.to_datetime(val, format='%Y%m%d')
+    print(parsed)  # 2025-07-01 00:00:00
+```
+
 ### Multi-Territory Support Implementation (Dec 8, 2025)
 
 **Changes:**

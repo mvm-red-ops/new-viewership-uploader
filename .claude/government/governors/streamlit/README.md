@@ -43,6 +43,29 @@ To be established in Constitutional Convention.
 
 ## Recent Updates
 
+### Template Configuration and Date Parsing Enhancements (Dec 8, 2025)
+
+**Database Write Delegate - DATA_TYPE Column Support:**
+- Fixed bug where `data_type` column wasn't being saved to `DICTIONARY.PUBLIC.VIEWERSHIP_FILE_FORMATS`
+- `insert_config()` and `update_config()` in `src/snowflake_utils.py` now include `data_type` in SQL statements (lines 127, 153, 209, 232)
+- This ensures Lambda receives correct type parameter ('Revenue' vs 'Viewership') for pipeline orchestration
+- **Impact:** Templates now properly save whether they're for revenue or viewership data
+
+**Database Write Delegate - YYYYMMDD Date Format Support:**
+- Enhanced date parsing in `src/snowflake_utils.py` (lines 716-738) to explicitly detect 8-digit YYYYMMDD format
+- Detection logic:
+  1. First checks if value is 8 digits (e.g., "20250701")
+  2. If yes, explicitly parses as YYYYMMDD format
+  3. If no, falls back to general date parsing (preserves all existing format support)
+- Preserves all existing date format detection for MM/DD/YYYY, DD-MM-YYYY, ISO dates, etc.
+- **Impact:** Data exports with YYYYMMDD dates now parse correctly instead of defaulting to Unix epoch
+
+**Files Modified:**
+- `src/snowflake_utils.py:127,153,209,232` - Added data_type to INSERT/UPDATE statements
+- `src/snowflake_utils.py:716-738` - Enhanced YYYYMMDD date parsing
+
+**See Also:** Snowflake Governor README for related SET_DATE_COLUMNS enhancement
+
 ### Multi-Territory Support (Dec 8, 2025)
 **UI Changes:**
 - Territory selection changed from single-select dropdown to multi-select

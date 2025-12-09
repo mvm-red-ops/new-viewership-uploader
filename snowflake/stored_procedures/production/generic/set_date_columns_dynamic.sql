@@ -15,7 +15,8 @@ AS '
     const platform = PLATFORM;
     const filename = FILENAME;
 
-    // First, check if there is a date column with data
+    // First, check if there is a date column with VALID data
+    // Exclude placeholder dates like 1970-08-23 (Unix epoch) which indicate no real date
     var checkDateQuery = `
         SELECT COUNT(*) as cnt
         FROM NOSEY_PROD.public.platform_viewership
@@ -23,6 +24,7 @@ AS '
           AND filename = ''${filename}''
           AND date IS NOT NULL
           AND TRIM(date) != ''''
+          AND YEAR(TRY_CAST(date AS DATE)) >= 2000
     `;
 
     var dateCheckResult = snowflake.execute({sqlText: checkDateQuery});

@@ -118,6 +118,57 @@ Snowflake Delegate → President: Requires Snowflake Governor approval OR 2+ del
 
 ## Recent Updates
 
+### Date Normalization Enhancement (Dec 8, 2025)
+
+**SET_DATE_COLUMNS Delegate - Placeholder Date Validation:**
+
+**Problem:** When YYYYMMDD dates weren't parsed correctly during Streamlit upload (due to missing format detection), Snowflake defaulted them to Unix epoch dates (1970-08-23). SET_DATE_COLUMNS_DYNAMIC then extracted year=1970 from these bad dates, overwriting correct year values that came from Lambda's payload.
+
+**Solution:** Added year validation to exclude placeholder/invalid dates before extracting date components.
+
+**Changes Made:**
+- Modified `SET_DATE_COLUMNS_DYNAMIC` stored procedure (staging and production versions)
+- Added `YEAR(TRY_CAST(date AS DATE)) >= 2000` validation (lines 18-28)
+- Date column only used if it contains valid dates (year >= 2000)
+- Invalid dates are skipped, preventing extraction of year=1970
+
+**Impact:**
+- Protects against incorrect date parsing causing data corruption
+- If date column has bad data (year < 2000), procedure falls back to month/year processing
+- Works in conjunction with Streamlit date parsing enhancement (see Streamlit Governor README)
+
+**Files Modified:**
+- `snowflake/stored_procedures/staging/generic/set_date_columns_dynamic.sql:18-28`
+- `snowflake/stored_procedures/production/generic/set_date_columns_dynamic.sql:18-28`
+
+**Example:**
+```javascript
+// Before: Would use ANY date, including 1970-08-23 from failed parsing
+var checkDateQuery = `
+    SELECT COUNT(*) as cnt
+    FROM TEST_STAGING.public.platform_viewership
+    WHERE platform = ''${platform}''
+      AND filename = ''${filename}''
+      AND date IS NOT NULL
+      AND TRIM(date) != ''''
+`;
+
+// After: Only uses valid dates with year >= 2000
+var checkDateQuery = `
+    SELECT COUNT(*) as cnt
+    FROM TEST_STAGING.public.platform_viewership
+    WHERE platform = ''${platform}''
+      AND filename = ''${filename}''
+      AND date IS NOT NULL
+      AND TRIM(date) != ''''
+      AND YEAR(TRY_CAST(date AS DATE)) >= 2000  // ← ADDED
+`;
+```
+
+**Deployment Status:** Deployed to UPLOAD_DB (staging) and UPLOAD_DB_PROD (production)
+
+**See Also:** Streamlit Governor README for YYYYMMDD date parsing enhancement that prevents bad dates from being written in the first place.
+
 ### Revenue Data Handling (Dec 8, 2025)
 
 **Database Write Delegate Enhancement:**

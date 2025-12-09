@@ -717,11 +717,20 @@ class SnowflakeConnection:
                             # Handle date column specially - convert to YYYY-MM-DD format
                             if isinstance(val, str):
                                 try:
-                                    # Try to parse the date and convert to YYYY-MM-DD
-                                    parsed_date = pd.to_datetime(val)
+                                    # Try common formats first, then fall back to general parsing
+                                    parsed_date = None
+
+                                    # Try YYYYMMDD format (common in exports)
+                                    if len(val) == 8 and val.isdigit():
+                                        parsed_date = pd.to_datetime(val, format='%Y%m%d', errors='coerce')
+
+                                    # If specific format didn't work, use general parsing (handles most formats)
+                                    if parsed_date is None or pd.isna(parsed_date):
+                                        parsed_date = pd.to_datetime(val)
+
                                     formatted_values.append(f"'{parsed_date.strftime('%Y-%m-%d')}'")
                                 except:
-                                    # If parsing fails, pass as-is and let Snowflake handle it
+                                    # If all parsing fails, pass as-is and let Snowflake handle it
                                     formatted_values.append(f"'{val}'")
                             elif isinstance(val, pd.Timestamp):
                                 formatted_values.append(f"'{val.strftime('%Y-%m-%d')}'")

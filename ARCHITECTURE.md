@@ -81,6 +81,8 @@ pandas `to_datetime()` defaults to MM-DD-YYYY, causing misinterpretation.
 
 Matches on: platform, domain, partner_name, channel_name, territory (all case-insensitive except platform)
 
+**Multi-Territory Support:** As of Dec 8, 2025, the `territory` field in `platform_viewership` is stored as an ARRAY to support multiple territories per record. Template configurations in `COLUMN_MAPPING_CONFIGS` also use ARRAY type for the `territories` column.
+
 **Common Issue:** Check NOSEY_PROD, not UPLOAD_DB_PROD for deal_parent!
 
 ---

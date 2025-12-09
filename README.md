@@ -51,6 +51,7 @@ python sql/deploy/deploy.py --env prod
 
 - Multi-file upload with preview
 - Visual column mapping
+- Multi-territory template support (select multiple territories per template)
 - Data transformations
 - Asset matching (multiple strategies)
 - Automatic validation
@@ -67,6 +68,8 @@ See `sql/deploy/config.yaml` for environment-specific database names.
 - **[CHEATSHEET.md](CHEATSHEET.md)** ⭐ **START HERE** - All commands you need
 - **[DEPLOYMENT_VERIFICATION.md](DEPLOYMENT_VERIFICATION.md)** - How verification works
 - **[docs/ASSET_MATCHING_ARCHITECTURE.md](docs/ASSET_MATCHING_ARCHITECTURE.md)** - Data flow & architecture
+- **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** - Common issues and solutions
+- **[MULTI_TERRITORY_SUPPORT_2025_12_08.md](MULTI_TERRITORY_SUPPORT_2025_12_08.md)** - Multi-territory feature implementation (Dec 2025)
 
 ## 🛠️ Common Commands
 
