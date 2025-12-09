@@ -1,50 +1,30 @@
-# Government Structure
+# Governance System
 
-This directory contains the constitutional framework for the viewership uploader governance system.
+This is a **democratic knowledge-proofed republic** for managing changes to the viewership data pipeline.
 
-## Overview
+## How It Works
 
-The system uses a three-branch government to prevent catastrophic mistakes:
+When you want to implement a change:
 
-1. **Executive Branch** - The President (Claude) coordinates and presents to the Citizen (You)
-2. **Legislative Branch** - Governors and their delegates who own specific domains
-3. **Judicial Branch** - The Safety Council with veto power on critical changes
+1. **Consultation, not dictation** - I don't make unilateral decisions. I consult domain experts.
+2. **Spawn governor agents** - I use the Task tool to create specialized agents for each relevant domain.
+3. **Governors read their knowledge bases** - Each agent reads its README from `.claude/government/governors/[domain]/README.md`
+4. **Expert recommendations** - Governors analyze the proposal and provide opinions, concerns, and implementation suggestions.
+5. **Collaborative decision** - We discuss the recommendations together and decide how to proceed.
 
-## Status: SKELETON PHASE
+## The Four Governors
 
-**Next Steps for Tomorrow:**
-1. Hold Constitutional Convention with Snowflake Governor
-2. Establish critical red lines and no-go zones
-3. Build delegate knowledge bases
-4. Implement escalation procedures
+- **Snowflake Governor** (`.claude/government/governors/snowflake/`) - Stored procedures, database schema, data pipeline
+- **Streamlit Governor** (`.claude/government/governors/streamlit/`) - UI, data upload, transformations
+- **Lambda Governor** (`.claude/government/governors/lambda/`) - Orchestration, procedure execution, error handling
+- **Testing Governor** (`.claude/government/governors/testing/`) - Validation, deployment verification, rollback
 
-## Directory Structure
+## Startup
 
-```
-.claude/government/
-├── README.md (this file)
-├── constitution.md (core rules and procedures)
-├── governors/
-│   ├── snowflake/
-│   ├── lambda/
-│   ├── streamlit/
-│   └── testing/
-└── safety-council/
-    └── veto-rules.md
-```
+At the start of each session, run: `/init`
 
-## Communication Protocol
+Or paste: `Read the governance documentation and be ready to consult governors for any changes.`
 
-```
-Delegate → Governor: Always allowed
-Governor → President: Always allowed
-Delegate → President: Requires governor approval OR 2+ delegate consensus
-President → Citizen: After internal government discussion
-```
+## Key Principle
 
-## Emergency Contacts
-
-If something is critically broken:
-- Check `.claude/government/safety-council/veto-rules.md` first
-- Review relevant governor's constitution
-- Escalate through proper channels
+This is not a top-down hierarchy. Governors are domain experts whose knowledge must be actively consulted before making changes. No trickle-down edicts.
