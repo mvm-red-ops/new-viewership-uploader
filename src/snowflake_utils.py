@@ -732,6 +732,20 @@ class SnowflakeConnection:
                                 except:
                                     # If all parsing fails, pass as-is and let Snowflake handle it
                                     formatted_values.append(f"'{val}'")
+                            elif isinstance(val, (int, float)) and not pd.isna(val):
+                                # Handle numeric dates (e.g., 20250701 as integer)
+                                try:
+                                    val_str = str(int(val))  # Convert to string, remove decimals
+                                    if len(val_str) == 8:
+                                        # YYYYMMDD format as integer
+                                        parsed_date = pd.to_datetime(val_str, format='%Y%m%d', errors='coerce')
+                                        formatted_values.append(f"'{parsed_date.strftime('%Y-%m-%d')}'")
+                                    else:
+                                        # Try general parsing
+                                        parsed_date = pd.to_datetime(val)
+                                        formatted_values.append(f"'{parsed_date.strftime('%Y-%m-%d')}'")
+                                except:
+                                    formatted_values.append(f"'{str(val)}'")
                             elif isinstance(val, pd.Timestamp):
                                 formatted_values.append(f"'{val.strftime('%Y-%m-%d')}'")
                             else:
