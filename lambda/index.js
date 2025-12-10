@@ -196,8 +196,8 @@ async function processStreamlitUpload(
         await markDataAsProcessed(uploadDatabaseFullyQualified, filename);
 
         // Calculate missing viewership metrics (TOT_HOV from TOT_MOV or vice versa)
-        // Only for Viewership type (not Revenue)
-        if (type && type.toLowerCase() === 'viewership') {
+        // For Viewership and Viewership_Revenue types (not pure Revenue)
+        if (type && type.toLowerCase().includes('viewership')) {
             console.log('Calculating missing viewership metrics (TOT_HOV/TOT_MOV)...');
             await calculateViewershipMetrics(platform, filename, uploadDatabaseName);
         }

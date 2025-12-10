@@ -993,6 +993,19 @@ REQUIRED_COLUMNS_REVENUE = [
     "Revenue"
 ]
 
+# Required columns for mixed viewership + revenue data
+REQUIRED_COLUMNS_VIEWERSHIP_REVENUE = [
+    "Partner",
+    "Date",
+    "Content Name",
+    "Content ID",
+    "Series",
+    "Channel",
+    "Territory",
+    "Total Watch Time",
+    "Revenue"
+]
+
 # Columns that can be specified at load time instead of in template
 LOAD_TIME_COLUMNS = ["Channel", "Territory"]
 
@@ -1299,12 +1312,13 @@ def upload_and_map_tab(sf_conn):
         # Map user-friendly labels to backend values
         data_type_labels = {
             "Hours/Mins by Episode": "Viewership",
-            "Revenue by Episode": "Revenue"
+            "Revenue by Episode": "Revenue",
+            "Combined Metrics by Episode": "Viewership_Revenue"
         }
 
         data_type_display = st.selectbox(
             "Data Type *",
-            options=["", "Hours/Mins by Episode", "Revenue by Episode"],
+            options=["", "Hours/Mins by Episode", "Revenue by Episode", "Combined Metrics by Episode"],
             help="Required. Select the type of data in this template. This determines which metrics columns are required."
         )
 
@@ -1411,7 +1425,8 @@ def upload_and_map_tab(sf_conn):
                 # Show user-friendly data type label
                 data_type_reverse_map = {
                     "Viewership": "Hours/Mins by Episode",
-                    "Revenue": "Revenue by Episode"
+                    "Revenue": "Revenue by Episode",
+                    "Viewership_Revenue": "Combined Metrics by Episode"
                 }
                 data_type_display_header = data_type_reverse_map.get(data_type, data_type) if data_type else '(not set)'
                 st.markdown(f"**File:** {filename} • **Platform:** {platform} • **Partner:** {partner if partner else '(platform-wide)'} • **Type:** {data_type_display_header}")
@@ -1490,11 +1505,12 @@ def upload_and_map_tab(sf_conn):
             # Reverse map backend values to display labels
             data_type_reverse_map = {
                 "Viewership": "Hours/Mins by Episode",
-                "Revenue": "Revenue by Episode"
+                "Revenue": "Revenue by Episode",
+                "Viewership_Revenue": "Combined Metrics by Episode"
             }
             data_type_display_value = data_type_reverse_map.get(data_type, data_type) if data_type else ""
 
-            data_type_display_options = ["", "Hours/Mins by Episode", "Revenue by Episode"]
+            data_type_display_options = ["", "Hours/Mins by Episode", "Revenue by Episode", "Combined Metrics by Episode"]
             data_type_display_idx = 0
             if data_type_display_value and data_type_display_value in data_type_display_options:
                 data_type_display_idx = data_type_display_options.index(data_type_display_value)
@@ -1510,7 +1526,8 @@ def upload_and_map_tab(sf_conn):
             # Map display label back to backend value
             data_type_labels = {
                 "Hours/Mins by Episode": "Viewership",
-                "Revenue by Episode": "Revenue"
+                "Revenue by Episode": "Revenue",
+                "Combined Metrics by Episode": "Viewership_Revenue"
             }
             data_type = data_type_labels.get(data_type_display_edit, data_type_display_edit) if data_type_display_edit else ""
             # Update session state
@@ -1546,7 +1563,12 @@ def upload_and_map_tab(sf_conn):
                 st.markdown("*Fields marked with <span style='color:red;'>*</span> are required*", unsafe_allow_html=True)
 
                 # Use appropriate required columns based on data type
-                required_cols = REQUIRED_COLUMNS_REVENUE if data_type == "Revenue" else REQUIRED_COLUMNS_VIEWERSHIP
+                if data_type == "Viewership_Revenue":
+                    required_cols = REQUIRED_COLUMNS_VIEWERSHIP_REVENUE
+                elif data_type == "Revenue":
+                    required_cols = REQUIRED_COLUMNS_REVENUE
+                else:
+                    required_cols = REQUIRED_COLUMNS_VIEWERSHIP
                 mapper = ColumnMapper(df.columns.tolist(), required_cols)
 
                 # Load existing mappings if in edit mode
@@ -2648,6 +2670,9 @@ def apply_column_mappings(df, column_mappings, platform, channel, territory, dom
     # Get the number of rows for broadcasting scalar values
     num_rows = len(df)
 
+    # Create a mapping of normalized column names to original names (whitespace + case insensitive matching)
+    normalized_to_original = {col.strip().lower(): col for col in df.columns}
+
     # Always use the platform from the parameter
     transformed_data['PLATFORM'] = [platform] * num_rows
 
@@ -2732,11 +2757,20 @@ def apply_column_mappings(df, column_mappings, platform, channel, territory, dom
             st.info(f"ℹ️ Using hardcoded value for {target_col}: '{hardcoded_value}'")
             continue  # Skip to next column
 
-        # Process if source column exists
-        if source_col and source_col in df.columns:
+        # Process if source column exists (with whitespace and case-insensitive matching)
+        actual_col_name = None
+        if source_col:
+            # Try exact match first
+            if source_col in df.columns:
+                actual_col_name = source_col
+            # Then try normalized match (stripped whitespace + lowercase)
+            elif source_col.strip().lower() in normalized_to_original:
+                actual_col_name = normalized_to_original[source_col.strip().lower()]
+
+        if actual_col_name:
             # Get source data
-            source_data = df[source_col]
-            original_data = df[source_col].copy()  # Keep a copy of original
+            source_data = df[actual_col_name]
+            original_data = df[actual_col_name].copy()  # Keep a copy of original
 
             # Special handling for Date column: Auto-detect format if no transformation configured
             if target_col == 'Date' and not transformation_config:
