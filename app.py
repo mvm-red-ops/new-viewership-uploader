@@ -1635,6 +1635,11 @@ def upload_and_map_tab(sf_conn):
                         st.caption("💡 Can be left unmapped and specified at load time")
                     else:
                         st.markdown(f"**{required_col}** <span style='color: red; font-weight: bold;'>*</span>", unsafe_allow_html=True)
+
+                    # Add guidance for Channel, Partner, Territory fields
+                    if required_col in ['Channel', 'Partner', 'Territory']:
+                        st.caption("💡 Select a column name if the value comes from your file, OR choose '✏️ Custom' to set a fixed value for all rows")
+
                     selected = st.selectbox(
                         required_col,
                         options,
@@ -1690,8 +1695,8 @@ def upload_and_map_tab(sf_conn):
                         if applied_key in st.session_state and st.session_state[applied_key]:
                             transformation_config = st.session_state.get(transform_key)
 
-                    # Special handling for Total Watch Time - add unit selector (only for Viewership)
-                    if required_col == "Total Watch Time" and selected != "❌ Not Mapped" and data_type == "Viewership":
+                    # Special handling for Total Watch Time - add unit selector (for Viewership and Mixed types)
+                    if required_col == "Total Watch Time" and selected != "❌ Not Mapped" and data_type in ["Viewership", "Viewership_Revenue"]:
                         if not transformation_config:  # Only show if no transformation applied
                             st.caption("Select unit:")
 
@@ -1733,8 +1738,8 @@ def upload_and_map_tab(sf_conn):
                             while isinstance(unwrapped_value, dict) and 'hardcoded_value' in unwrapped_value:
                                 unwrapped_value = unwrapped_value['hardcoded_value']
 
-                            # For Total Watch Time, store unit in a separate key (only for Viewership)
-                            if required_col == "Total Watch Time" and data_type == "Viewership":
+                            # For Total Watch Time, store unit in a separate key (for Viewership and Mixed types)
+                            if required_col == "Total Watch Time" and data_type in ["Viewership", "Viewership_Revenue"]:
                                 final_mappings[required_col] = {'hardcoded_value': unwrapped_value}
                                 final_mappings['_total_watch_time_unit'] = unit.lower()
                             else:
@@ -1750,8 +1755,8 @@ def upload_and_map_tab(sf_conn):
                         if transformation_config:
                             mapping_value['transformation'] = transformation_config
 
-                        # For Total Watch Time, store unit (only for Viewership)
-                        if required_col == "Total Watch Time" and not transformation_config and data_type == "Viewership":
+                        # For Total Watch Time, store unit (for Viewership and Mixed types)
+                        if required_col == "Total Watch Time" and not transformation_config and data_type in ["Viewership", "Viewership_Revenue"]:
                             mapping_value['unit'] = unit.lower()
 
                         final_mappings[required_col] = mapping_value
@@ -1986,10 +1991,12 @@ def upload_and_map_tab(sf_conn):
                                 st.session_state.data_type = None
                             else:
                                 # Check if exact config already exists (matching UNIQUE constraint)
+                                territory_value = selected_territories[0] if selected_territories else None
                                 existing_config = sf_conn.check_duplicate_config(
                                     platform=platform,
                                     partner=partner_value,
-                                    channel=channel
+                                    channel=channel,
+                                    territory=territory_value
                                 )
 
                                 if existing_config:
@@ -2285,7 +2292,9 @@ def load_data_tab(sf_conn):
             try:
                 # Use DEFAULT if partner is blank
                 partner_value = partner.strip() if partner.strip() else "DEFAULT"
-                config = sf_conn.get_config_by_platform_partner(platform, partner_value)
+                # Pass territory to get more specific template match (if territory is provided)
+                territory_value = territory.strip() if territory and territory.strip() else None
+                config = sf_conn.get_config_by_platform_partner(platform, partner_value, territory_value)
 
                 if config:
                     st.success(f"✓ Found configuration for Platform: {platform}, Partner: {partner_value}")
@@ -2834,21 +2843,20 @@ def apply_column_mappings(df, column_mappings, platform, channel, territory, dom
                     # No transformation, just store as usual
                     transformed_data[std_col_name] = source_data
         elif source_col and source_col != "":
-            # Column not found - check if this should be a hardcoded value
-            # For Channel, Partner, Territory: treat missing columns as hardcoded values
+            # Column not found - this is a configuration error
+            # Show clear error message instead of silently treating as hardcoded value
             if target_col in ['Channel', 'Partner', 'Territory']:
-                # Use the value as a constant for all rows
-                if target_col in column_name_mapping:
-                    std_col_name = column_name_mapping[target_col]
-                else:
-                    std_col_name = target_col.upper().replace(' ', '_')
-
-                # Broadcast scalar value to match dataframe length
-                transformed_data[std_col_name] = [source_col] * num_rows  # Use the "source_col" as constant value
-                st.info(f"ℹ️ Using hardcoded value for {target_col}: '{source_col}'")
+                st.error(
+                    f"**Configuration Error:** Column '{source_col}' not found in uploaded file for {target_col}.\n\n"
+                    f"**To fix this, you have two options:**\n"
+                    f"1. Upload a file that has a '{source_col}' column, OR\n"
+                    f"2. Edit the template and select **'✏️ Custom (enter manually)'** to set a hardcoded value (like 'Nosey')"
+                )
+                st.stop()
             else:
-                # For other columns, warn that column is missing
-                st.warning(f"Column '{source_col}' specified in mapping but not found in uploaded file")
+                # For other columns, show error that column is missing
+                st.error(f"Column '{source_col}' specified in mapping but not found in uploaded file")
+                st.stop()
 
     # Create dataframe from transformed data
     result_df = pd.DataFrame(transformed_data)

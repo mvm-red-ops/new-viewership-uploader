@@ -310,47 +310,84 @@ class SnowflakeConnection:
         except Exception as e:
             raise Exception(f"Error retrieving configuration: {str(e)}")
 
-    def get_config_by_platform_partner(self, platform: str, partner: str) -> Optional[Dict]:
+    def get_config_by_platform_partner(self, platform: str, partner: str, territory: str = None) -> Optional[Dict]:
         """
-        Retrieve a configuration by platform and partner
+        Retrieve a configuration by platform, partner, and optionally territory
 
         Args:
             platform: The platform name
             partner: The partner name
+            territory: Optional territory name for more specific matching
 
         Returns:
             Dictionary containing configuration details or None if not found
         """
-        select_sql = f"""
-        SELECT
-            config_id,
-            platform,
-            partner,
-            channel,
-            territory,
-            column_mappings,
-            validation_rules,
-            filename_pattern,
-            source_columns,
-            target_table,
-            created_date,
-            updated_date,
-            created_by,
-            custom_sanitization_procedure,
-            custom_territory_procedure,
-            custom_channel_procedure,
-            custom_date_procedure,
-            custom_normalizers,
-            domain,
-            sample_data,
-            data_type,
-            territories
-        FROM dictionary.public.viewership_file_formats
-        WHERE LOWER(platform) = LOWER(%s) AND LOWER(partner) = LOWER(%s)
-        """
+        # Build query with optional territory filtering
+        if territory:
+            select_sql = f"""
+            SELECT
+                config_id,
+                platform,
+                partner,
+                channel,
+                territory,
+                column_mappings,
+                validation_rules,
+                filename_pattern,
+                source_columns,
+                target_table,
+                created_date,
+                updated_date,
+                created_by,
+                custom_sanitization_procedure,
+                custom_territory_procedure,
+                custom_channel_procedure,
+                custom_date_procedure,
+                custom_normalizers,
+                domain,
+                sample_data,
+                data_type,
+                territories
+            FROM dictionary.public.viewership_file_formats
+            WHERE LOWER(platform) = LOWER(%s)
+              AND LOWER(partner) = LOWER(%s)
+              AND LOWER(territory) = LOWER(%s)
+            ORDER BY updated_date DESC NULLS LAST, created_date DESC
+            """
+            params = (platform, partner, territory)
+        else:
+            select_sql = f"""
+            SELECT
+                config_id,
+                platform,
+                partner,
+                channel,
+                territory,
+                column_mappings,
+                validation_rules,
+                filename_pattern,
+                source_columns,
+                target_table,
+                created_date,
+                updated_date,
+                created_by,
+                custom_sanitization_procedure,
+                custom_territory_procedure,
+                custom_channel_procedure,
+                custom_date_procedure,
+                custom_normalizers,
+                domain,
+                sample_data,
+                data_type,
+                territories
+            FROM dictionary.public.viewership_file_formats
+            WHERE LOWER(platform) = LOWER(%s) AND LOWER(partner) = LOWER(%s)
+            ORDER BY updated_date DESC NULLS LAST, created_date DESC
+            """
+            params = (platform, partner)
 
         try:
-            self.cursor.execute(select_sql, (platform, partner))
+            self.cursor.execute(select_sql, params)
             row = self.cursor.fetchone()
 
             if row:
@@ -448,28 +485,33 @@ class SnowflakeConnection:
             print(f"Warning: Could not fetch partners from dictionary.public.partners: {str(e)}")
             return []
 
-    def check_duplicate_config(self, platform: str, partner: str, channel: Optional[str] = None) -> Optional[Dict]:
+    def check_duplicate_config(self, platform: str, partner: str, channel: Optional[str] = None, territory: Optional[str] = None) -> Optional[Dict]:
         """
         Check if exact configuration already exists (matches UNIQUE constraint)
-
-        NOTE: Territory is not checked - new constraint allows same platform/partner/channel
-        with different territories arrays.
 
         Args:
             platform: Platform name (exact match)
             partner: Partner name (exact match)
             channel: Channel name (exact match, NULL if None)
+            territory: Territory name (exact match, NULL if None)
 
         Returns:
             Dictionary with config details if duplicate exists, None otherwise
         """
         # Handle NULL comparison properly in SQL
+        params = [platform, partner]
+
         if channel:
             channel_clause = "channel = %s"
-            params = [platform, partner, channel]
+            params.append(channel)
         else:
             channel_clause = "channel IS NULL"
-            params = [platform, partner]
+
+        if territory:
+            territory_clause = "territory = %s"
+            params.append(territory)
+        else:
+            territory_clause = "territory IS NULL"
 
         select_sql = f"""
         SELECT
@@ -499,6 +541,7 @@ class SnowflakeConnection:
         WHERE platform = %s
           AND partner = %s
           AND {channel_clause}
+          AND {territory_clause}
         """
 
         try:
