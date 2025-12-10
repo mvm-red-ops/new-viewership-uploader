@@ -2292,9 +2292,9 @@ def load_data_tab(sf_conn):
             try:
                 # Use DEFAULT if partner is blank
                 partner_value = partner.strip() if partner.strip() else "DEFAULT"
-                # Pass territory to get more specific template match (if territory is provided)
-                territory_value = territory.strip() if territory and territory.strip() else None
-                config = sf_conn.get_config_by_platform_partner(platform, partner_value, territory_value)
+                # TODO: Add territory parameter once production server is restarted
+                # territory_value = territory.strip() if territory and territory.strip() else None
+                config = sf_conn.get_config_by_platform_partner(platform, partner_value)
 
                 if config:
                     st.success(f"✓ Found configuration for Platform: {platform}, Partner: {partner_value}")
