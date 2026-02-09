@@ -24,8 +24,10 @@ def is_wide_format(df: pd.DataFrame) -> Tuple[bool, Optional[Dict]]:
     if df.empty or len(df.columns) < 5:
         return False, None
 
-    # Pattern to match date columns (YYYY-MM-DD format) including pandas-renamed duplicates (.1, .2, etc.)
-    date_pattern = re.compile(r'^(\d{4}-\d{2}-\d{2})(?:\.(\d+))?$')
+    # Pattern to match date columns in multiple formats including pandas-renamed duplicates (.1, .2, etc.)
+    # Supports: YYYY-MM-DD, DD-MM-YYYY, MM-DD-YYYY
+    date_pattern_ymd = re.compile(r'^(\d{4}-\d{2}-\d{2})(?:\.(\d+))?$')  # YYYY-MM-DD
+    date_pattern_dmy = re.compile(r'^(\d{2}-\d{2}-\d{4})(?:\.(\d+))?$')  # DD-MM-YYYY or MM-DD-YYYY
 
     # Find columns that look like dates (including .1, .2 suffixes from pandas)
     date_columns = []
@@ -33,17 +35,34 @@ def is_wide_format(df: pd.DataFrame) -> Tuple[bool, Optional[Dict]]:
 
     for col in df.columns:
         col_str = str(col).strip()
-        match = date_pattern.match(col_str)
 
+        # Try YYYY-MM-DD format
+        match = date_pattern_ymd.match(col_str)
         if match:
-            base_date = match.group(1)  # Extract base date without suffix
-            # Verify it's a valid date
+            base_date = match.group(1)
             try:
                 datetime.strptime(base_date, '%Y-%m-%d')
                 date_columns.append(col_str)
                 base_dates.add(base_date)
-            except ValueError:
                 continue
+            except ValueError:
+                pass
+
+        # Try DD-MM-YYYY format
+        match = date_pattern_dmy.match(col_str)
+        if match:
+            base_date = match.group(1)
+            # Try both DD-MM-YYYY and MM-DD-YYYY
+            for fmt in ['%d-%m-%Y', '%m-%d-%Y']:
+                try:
+                    parsed_date = datetime.strptime(base_date, fmt)
+                    # Convert to YYYY-MM-DD for consistency
+                    normalized_date = parsed_date.strftime('%Y-%m-%d')
+                    date_columns.append(col_str)
+                    base_dates.add(normalized_date)
+                    break
+                except ValueError:
+                    continue
 
     # Check if we have multiple date columns (minimum 2 unique base dates for wide format)
     if len(base_dates) < 2:
@@ -120,8 +139,9 @@ def transform_wide_to_long(df: pd.DataFrame, metadata: Dict) -> pd.DataFrame:
         # Get ALL columns and identify date columns (including pandas-renamed ones like 2025-07-01.1, .2, etc.)
         all_columns = list(df.columns)
 
-        # Pattern to match date columns and their pandas suffixes
-        date_pattern = re.compile(r'^(\d{4}-\d{2}-\d{2})(?:\.(\d+))?$')
+        # Patterns to match date columns and their pandas suffixes
+        date_pattern_ymd = re.compile(r'^(\d{4}-\d{2}-\d{2})(?:\.(\d+))?$')  # YYYY-MM-DD
+        date_pattern_dmy = re.compile(r'^(\d{2}-\d{2}-\d{4})(?:\.(\d+))?$')  # DD-MM-YYYY or MM-DD-YYYY
 
         # Group columns by base date
         date_groups = {}  # {base_date: [(col_name, metric_name), ...]}
@@ -129,10 +149,27 @@ def transform_wide_to_long(df: pd.DataFrame, metadata: Dict) -> pd.DataFrame:
 
         for col in all_columns:
             col_str = str(col).strip()
-            match = date_pattern.match(col_str)
+            base_date = None
 
+            # Try YYYY-MM-DD format
+            match = date_pattern_ymd.match(col_str)
             if match:
-                base_date = match.group(1)  # Extract base date (e.g., "2025-07-01")
+                base_date = match.group(1)
+            else:
+                # Try DD-MM-YYYY format
+                match = date_pattern_dmy.match(col_str)
+                if match:
+                    raw_date = match.group(1)
+                    # Try to parse and normalize to YYYY-MM-DD
+                    for fmt in ['%d-%m-%Y', '%m-%d-%Y']:
+                        try:
+                            parsed_date = datetime.strptime(raw_date, fmt)
+                            base_date = parsed_date.strftime('%Y-%m-%d')
+                            break
+                        except ValueError:
+                            continue
+
+            if base_date:
                 metric_name = str(metric_row[col]).strip()
 
                 if base_date not in date_groups:
