@@ -2755,8 +2755,12 @@ def apply_column_mappings(df, column_mappings, platform, channel, territory, dom
                 unit = mapping_value.get('unit', 'hours')
         else:
             # Old format (backwards compatible) - simple string mapping
-            source_col = mapping_value
-            unit = column_mappings.get('_total_watch_time_unit', 'hours')
+            # Special case: Partner, Channel, Territory in legacy format should be hardcoded values
+            if target_col in ['Partner', 'Channel', 'Territory']:
+                hardcoded_value = mapping_value
+            else:
+                source_col = mapping_value
+                unit = column_mappings.get('_total_watch_time_unit', 'hours')
 
         # Skip metadata keys
         if target_col == '_total_watch_time_unit':
@@ -2854,18 +2858,28 @@ def apply_column_mappings(df, column_mappings, platform, channel, territory, dom
         elif source_col and source_col != "":
             # Column not found - this is a configuration error
             # Show clear error message instead of silently treating as hardcoded value
+
+            # Show available columns to help user debug
+            available_cols = list(df.columns)
+
+            # Try to find similar column names (fuzzy matching)
+            similar_cols = [col for col in available_cols if source_col.lower() in col.lower() or col.lower() in source_col.lower()]
+
+            error_msg = f"**Configuration Error:** Column '{source_col}' not found in uploaded file for {target_col}.\n\n"
+            error_msg += f"**Available columns in your file:**\n{', '.join(available_cols)}"
+
+            if similar_cols:
+                error_msg += f"\n\n**Did you mean one of these?** {', '.join(similar_cols)}"
+
             if target_col in ['Channel', 'Partner', 'Territory']:
-                st.error(
-                    f"**Configuration Error:** Column '{source_col}' not found in uploaded file for {target_col}.\n\n"
-                    f"**To fix this, you have two options:**\n"
-                    f"1. Upload a file that has a '{source_col}' column, OR\n"
-                    f"2. Edit the template and select **'✏️ Custom (enter manually)'** to set a hardcoded value (like 'Nosey')"
-                )
-                st.stop()
+                error_msg += f"\n\n**To fix this, you have two options:**\n"
+                error_msg += f"1. Upload a file that has a '{source_col}' column, OR\n"
+                error_msg += f"2. Edit the template and select **'✏️ Custom (enter manually)'** to set a hardcoded value"
             else:
-                # For other columns, show error that column is missing
-                st.error(f"Column '{source_col}' specified in mapping but not found in uploaded file")
-                st.stop()
+                error_msg += f"\n\n**To fix this:** Edit the template and map '{target_col}' to the correct column name from your file."
+
+            st.error(error_msg)
+            st.stop()
 
     # Create dataframe from transformed data
     result_df = pd.DataFrame(transformed_data)
