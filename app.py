@@ -2434,12 +2434,16 @@ def load_data_tab(sf_conn):
                                     while isinstance(unwrapped, dict) and 'hardcoded_value' in unwrapped:
                                         unwrapped = unwrapped['hardcoded_value']
                                     column_mappings[key] = {'hardcoded_value': unwrapped}
+                            # Use template's channel/territory if user didn't provide them
+                            effective_channel = channel if channel else config.get('CHANNEL', '')
+                            effective_territory = territory if territory else config.get('TERRITORY', '')
+
                             preview_df = apply_column_mappings(
                                 file_info[0]['df'].head(50),
                                 column_mappings,
                                 platform,
-                                channel,
-                                territory,
+                                effective_channel,
+                                effective_territory,
                                 domain,
                                 file_info[0]['name'],
                                 year,
@@ -2500,8 +2504,13 @@ def load_data_tab(sf_conn):
                                 batch_status.text("")
 
                                 try:
+                                    # Use template's channel/territory if user didn't provide them
+                                    # This handles legacy templates where channel/territory are in metadata, not column_mappings
+                                    effective_channel = channel if channel else config.get('CHANNEL', '')
+                                    effective_territory = territory if territory else config.get('TERRITORY', '')
+
                                     # Transform data according to mappings
-                                    transformed_df = apply_column_mappings(info['df'], column_mappings, platform, channel, territory, domain, info['name'], year, quarter, month)
+                                    transformed_df = apply_column_mappings(info['df'], column_mappings, platform, effective_channel, effective_territory, domain, info['name'], year, quarter, month)
 
                                     # Filter out records with zero or empty revenue
                                     if 'REVENUE' in transformed_df.columns:

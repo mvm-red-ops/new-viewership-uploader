@@ -351,7 +351,11 @@ class SnowflakeConnection:
             FROM dictionary.public.viewership_file_formats
             WHERE LOWER(platform) = LOWER(%s)
               AND LOWER(partner) = LOWER(%s)
-              AND LOWER(territory) = LOWER(%s)
+              AND (
+                territories IS NULL
+                OR ARRAY_SIZE(territories) = 0
+                OR ARRAY_CONTAINS(UPPER(%s)::VARIANT, territories)
+              )
             ORDER BY updated_date DESC NULLS LAST, created_date DESC
             """
             params = (platform, partner, territory)
@@ -471,7 +475,7 @@ class SnowflakeConnection:
             List of partner names
         """
         select_sql = """
-        SELECT name
+        SELECT DISTINCT name
         FROM dictionary.public.partners
         WHERE active = true
         ORDER BY name ASC
