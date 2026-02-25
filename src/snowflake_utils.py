@@ -354,7 +354,7 @@ class SnowflakeConnection:
               AND (
                 territories IS NULL
                 OR ARRAY_SIZE(territories) = 0
-                OR EXISTS (SELECT 1 FROM TABLE(FLATTEN(input => territories)) t WHERE LOWER(t.value::STRING) = LOWER(%s))
+                OR CONTAINS(LOWER(territories::STRING), LOWER(%s))
               )
             ORDER BY updated_date DESC NULLS LAST, created_date DESC
             """
