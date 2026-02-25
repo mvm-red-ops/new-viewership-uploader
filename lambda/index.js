@@ -53,25 +53,21 @@ const handler = async (event) => {
         const verifyPhaseResult = await verifyPhase(platform, uploadDatabaseFullyQualified, null, record_count, filename, type);
         console.log("🚀 ~ handler ~ verifyPhaseResult-null:", verifyPhaseResult)
 
-        if (!verifyPhaseResult) {
-            console.error('Unable to verify intial lambda verfication phase');
-            await sendEmail(userEmail, platform, "Processing Error", `Your data failed processing at intial lambda verfication phase for platform ${platform}, filename ${filename}, label/type ${type} and domain ${domain}.`);
-            return { statusCode: 200, body: JSON.stringify({ message: 'Unable to verify intial lambda verfication phase' }) }; // two 200 to 400
+        if (!verifyPhaseResult.verified) {
+            console.error('Initial verification failed:', verifyPhaseResult.reason);
+            await sendEmail(userEmail, platform, "Processing Error", `Initial verification failed for ${filename}: ${verifyPhaseResult.reason}`);
+            return { statusCode: 200, body: JSON.stringify({ message: verifyPhaseResult.reason }) };
         }
 
-        // return;
         // Start data processing by moving data to staging
         await startDataProcessing(platform, uploadDatabaseName, filename);
-        // return;
+
         // Verify Phase 0
         let phaseVerified = await verifyPhase(platform, viewershipDatabaseFullyQualified, '0', record_count, filename, type);
-        console.log("🚀 ~ handler ~ phaseVerified 0:", phaseVerified)
-        // return;
-        if (!phaseVerified) {
-            console.log("🚀 ~ handler ~ phaseVerified:", phaseVerified)
-            console.error('Unable to verify phase while moving the data to staging');
-            await sendEmail(userEmail, platform, "Processing Error", `Your data failed processing at phase while moving the data to staging for platform ${platform}, filename ${filename}, label/type ${type} and domain ${domain}.`);
-            return { statusCode: 200, body: JSON.stringify({ message: 'Unable to verify phase while moving the data to staging' }) }; // 400 to 200
+        if (!phaseVerified.verified) {
+            console.error('Phase 0 failed:', phaseVerified.reason);
+            await sendEmail(userEmail, platform, "Processing Error", `Phase 0 (move to staging) failed for ${filename}: ${phaseVerified.reason}`);
+            return { statusCode: 200, body: JSON.stringify({ message: phaseVerified.reason }) };
         }
 
         // Mark data as processed in upload db as we won't use this data in another step
@@ -79,49 +75,36 @@ const handler = async (event) => {
 
         // Normalize data
         await normalizeData(platform, uploadDatabaseName, filename);
-        
+
         // Verify Phase 1
         phaseVerified = await verifyPhase(platform, viewershipDatabaseFullyQualified, '1', record_count, filename, type);
-        console.log("🚀 ~ handler ~ phaseVerified 1:", phaseVerified)
-        if (!phaseVerified) {
-            console.error('Unable to verify phase 1 after normalizing the data');
-            await sendEmail(userEmail, platform, "Processing Error", `Your data failed processing at phase 1. Unable to verify the correct record count and total viewership hours for platform ${platform}, filename ${filename}, label/type ${type} and domain ${domain}.`);
-            return { statusCode: 200, body: JSON.stringify({ message: 'Unable to verify phase 1 after normalizing the data' }) }; // 400 to 200
+        if (!phaseVerified.verified) {
+            console.error('Phase 1 failed:', phaseVerified.reason);
+            await sendEmail(userEmail, platform, "Processing Error", `Phase 1 (normalization) failed for ${filename}: ${phaseVerified.reason}`);
+            return { statusCode: 200, body: JSON.stringify({ message: phaseVerified.reason }) };
         }
 
-        // return;
-
-        // // Set content references
+        // Set content references
         await setContentReferences(platform, filename, uploadDatabaseName);
-        
-        
-        // // Verify Phase 2
+
+        // Verify Phase 2
         phaseVerified = await verifyPhase(platform, viewershipDatabaseFullyQualified, '2', record_count, filename, type);
-        console.log("🚀 ~ handler ~ phaseVerified 2:", phaseVerified)
-
-        if (!phaseVerified) {
-            console.error('Unable to verify phase 2 after setting content references');
-            let emailBody = `
-                Your data failed processing at phase to update content references. 
-                Please check records in ${viewershipDatabaseFullyQualified} table for platform ${platform}, filename ${filename}, label/type ${type} and domain ${domain}.
-                Update the ref_id, asset_title, asset_series etc required data and insert into final table.
-            `;
-
-            await sendEmail(userEmail, platform, "Processing Error", emailBody);
-            return { statusCode: 200, body: JSON.stringify({ message: 'Unable to verify phase 2 after setting content references' }) }; //400 to 200
+        if (!phaseVerified.verified) {
+            console.error('Phase 2 failed:', phaseVerified.reason);
+            await sendEmail(userEmail, platform, "Processing Error",
+                `Phase 2 (content references) failed for ${filename}: ${phaseVerified.reason}\n\nCheck records in ${viewershipDatabaseFullyQualified} and update ref_id, asset_title, asset_series as needed.`);
+            return { statusCode: 200, body: JSON.stringify({ message: phaseVerified.reason }) };
         }
 
         // Move to final table
         await moveToFinalTable(platform, uploadDatabaseName, type, filename);
- 
-        // Verify Final Phase 
+
+        // Verify Final Phase
         phaseVerified = await verifyPhase(platform, episodeDetailsDatabaseFullyQualified, '2', record_count, filename, type, reprocessingLogFullyQualified);
-        console.log("🚀 ~ handler ~ phaseVerified final 2:", phaseVerified)
-        // return ;
-        if (!phaseVerified) {
-            console.error('Unable to complete final verify phase while moving to final table');
-            await sendEmail(userEmail, platform, "Processing Error", "Unable to complete final verify phase while moving to final table.");
-            return { statusCode: 200, body: JSON.stringify({ message: 'Unable to complete final verify phase while moving to final table' }) }; //400 to 200
+        if (!phaseVerified.verified) {
+            console.error('Final phase failed:', phaseVerified.reason);
+            await sendEmail(userEmail, platform, "Processing Error", `Final phase (move to final table) failed for ${filename}: ${phaseVerified.reason}`);
+            return { statusCode: 200, body: JSON.stringify({ message: phaseVerified.reason }) };
         }
 
         // Mark data as processed in viewership db
@@ -170,11 +153,11 @@ async function processStreamlitUpload(
         const initialVerifyResult = await verifyPhase(platform, uploadDatabaseFullyQualified, null, record_count, filename, type);
         console.log("Streamlit - Initial verification:", initialVerifyResult);
 
-        if (!initialVerifyResult) {
-            console.error('Unable to verify data in upload_db after Streamlit upload');
+        if (!initialVerifyResult.verified) {
+            console.error('Initial verification failed:', initialVerifyResult.reason);
             await sendEmail(userEmail, platform, "Processing Error",
-                `Unable to find uploaded data for platform ${platform}, filename ${filename}, label/type ${type} and domain ${domain}.`);
-            return { statusCode: 200, body: JSON.stringify({ message: 'Unable to verify data in upload_db' }) };
+                `Initial verification failed for ${filename}: ${initialVerifyResult.reason}`);
+            return { statusCode: 200, body: JSON.stringify({ message: initialVerifyResult.reason }) };
         }
 
         // Move data to staging for processing (data already normalized, just need to move it)
@@ -185,11 +168,11 @@ async function processStreamlitUpload(
         let phaseVerified = await verifyPhase(platform, viewershipDatabaseFullyQualified, '0', record_count, filename, type);
         console.log("Streamlit - Phase 0 verified:", phaseVerified);
 
-        if (!phaseVerified) {
-            console.error('Unable to verify data after moving to staging');
+        if (!phaseVerified.verified) {
+            console.error('Phase 0 failed:', phaseVerified.reason);
             await sendEmail(userEmail, platform, "Processing Error",
-                `Data failed to move to staging for platform ${platform}, filename ${filename}.`);
-            return { statusCode: 200, body: JSON.stringify({ message: 'Unable to verify phase 0' }) };
+                `Phase 0 (move to staging) failed for ${filename}: ${phaseVerified.reason}`);
+            return { statusCode: 200, body: JSON.stringify({ message: phaseVerified.reason }) };
         }
 
         // Mark data as processed in upload db
@@ -214,15 +197,11 @@ async function processStreamlitUpload(
         phaseVerified = await verifyPhase(platform, viewershipDatabaseFullyQualified, '2', record_count, filename, type);
         console.log("Streamlit - Phase 2 verified:", phaseVerified);
 
-        if (!phaseVerified) {
-            console.error('Unable to verify phase 2 after setting content references');
-            let emailBody = `
-                Your data failed processing at phase 2 (content references).
-                Please check records in ${viewershipDatabaseFullyQualified} table for platform ${platform}, filename ${filename}, label/type ${type} and domain ${domain}.
-                Update the ref_id, asset_title, asset_series etc required data and insert into final table.
-            `;
-            await sendEmail(userEmail, platform, "Processing Error", emailBody);
-            return { statusCode: 200, body: JSON.stringify({ message: 'Unable to verify phase 2' }) };
+        if (!phaseVerified.verified) {
+            console.error('Phase 2 failed:', phaseVerified.reason);
+            await sendEmail(userEmail, platform, "Processing Error",
+                `Phase 2 (content references) failed for ${filename}: ${phaseVerified.reason}\n\nCheck records in ${viewershipDatabaseFullyQualified} and update ref_id, asset_title, asset_series as needed.`);
+            return { statusCode: 200, body: JSON.stringify({ message: phaseVerified.reason }) };
         }
 
         // PHASE 3: Move to final table
@@ -233,10 +212,10 @@ async function processStreamlitUpload(
         phaseVerified = await verifyPhase(platform, episodeDetailsDatabaseFullyQualified, '2', record_count, filename, type, reprocessingLogFullyQualified);
         console.log("Streamlit - Final phase verified:", phaseVerified);
 
-        if (!phaseVerified) {
-            console.error('Unable to complete final verify phase while moving to final table');
-            await sendEmail(userEmail, platform, "Processing Error", "Unable to complete final verify phase while moving to final table.");
-            return { statusCode: 200, body: JSON.stringify({ message: 'Unable to complete final verify phase' }) };
+        if (!phaseVerified.verified) {
+            console.error('Final phase failed:', phaseVerified.reason);
+            await sendEmail(userEmail, platform, "Processing Error", `Final phase (move to final table) failed for ${filename}: ${phaseVerified.reason}`);
+            return { statusCode: 200, body: JSON.stringify({ message: phaseVerified.reason }) };
         }
 
         // Mark data as processed in viewership db

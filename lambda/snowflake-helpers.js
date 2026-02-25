@@ -169,22 +169,25 @@ async function verifyPhase(platform, fullyQualifiedDatabaseInstance, phase, file
                 if (expectsRevenue) {
                     console.log(`Phase ${phase} verified: Expected count (revenue): ${expected_total_count_revenue}, actual count match (revenue): ${actual_total_count_revenue}`);
                 }
-                return true;
+                return { verified: true };
             } else {
-                console.log(`Phase verification failed for phase: ${phase}`);
+                const reasons = [];
                 if (expectsViewership && !isViewershipVerified) {
-                    console.log(`Viewership count mismatch: Expected count: ${expected_total_count_viewership}, Actual count: ${actual_total_count_viewership}`);
+                    reasons.push(`viewership count mismatch: found ${actual_total_count_viewership}, expected ${expected_total_count_viewership}`);
                 }
                 if (expectsRevenue && !isRevenueVerified) {
-                    console.log(`Revenue count mismatch: Expected count: ${expected_total_count_revenue}, Actual count: ${actual_total_count_revenue}`);
+                    reasons.push(`revenue count mismatch: found ${actual_total_count_revenue}, expected ${expected_total_count_revenue}`);
                 }
+                const reason = `Phase ${phase ?? 'initial'} verification failed in ${fullyQualifiedDatabaseInstance}: ${reasons.join('; ')}`;
+                console.log(reason);
+                return { verified: false, reason };
             }
         } catch (error) {
             console.log(`Error executing query for phase ${phase}:`, error);
+            return { verified: false, reason: `Query error during phase ${phase ?? 'initial'} verification: ${error.message}` };
         }
 
-    console.log(`Max retries reached for phase verification. Phase: ${phase}, Expected count: ${file_record_count * 2}.`);
-    return false;
+    return { verified: false, reason: `Phase ${phase ?? 'initial'} verification failed in ${fullyQualifiedDatabaseInstance} (no rows found)` };
 }
 
 async function calculateViewershipMetrics(platform, filename, databaseName) {
