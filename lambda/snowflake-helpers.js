@@ -134,16 +134,23 @@ async function verifyPhase(platform, fullyQualifiedDatabaseInstance, phase, file
                 console.log('Executing original single query: SQL (original)');
                 const result = await runQueryWithoutBind(sqlText);
                 if (result && result.rows && result.rows.length > 0) {
-                    actual_count_viewership = result.rows[0].MATCHING_RECORDS_COUNT;
-                    console.log(`Matching records count: ${actual_count_viewership}`);
+                    const matchingCount = result.rows[0].MATCHING_RECORDS_COUNT;
+                    actual_count_viewership = matchingCount;
+                    actual_count_revenue = matchingCount;
+                    console.log(`Matching records count: ${matchingCount}`);
                 } else {
                     console.log('No records found or empty result set.');
                 }
             }
 
             // Calculate expected total count dynamically for viewership and revenue separately
-            let expected_total_count_viewership = file_record_count;
-            let expected_total_count_revenue = file_record_count;
+            // Only expect revenue records if type includes "revenue"
+            const uploadType = type?.toLowerCase()?.trim() ?? "";
+            const expectsViewership = uploadType.includes("viewership");
+            const expectsRevenue = uploadType.includes("revenue");
+
+            let expected_total_count_viewership = expectsViewership ? file_record_count : 0;
+            let expected_total_count_revenue = expectsRevenue ? file_record_count : 0;
 
             // Verify separately for viewership and revenue
             const actual_total_count_viewership = actual_count_viewership + unmatched_count;
@@ -152,23 +159,23 @@ async function verifyPhase(platform, fullyQualifiedDatabaseInstance, phase, file
             console.log(`Expected count (viewership): ${expected_total_count_viewership}, Actual count (viewership): ${actual_total_count_viewership}`);
             console.log(`Expected count (revenue): ${expected_total_count_revenue}, Actual count (revenue): ${actual_total_count_revenue}`);
 
-            const isViewershipVerified = actual_total_count_viewership === expected_total_count_viewership;
-            const isRevenueVerified = actual_total_count_revenue === expected_total_count_revenue;
+            const isViewershipVerified = !expectsViewership || (actual_total_count_viewership === expected_total_count_viewership);
+            const isRevenueVerified = !expectsRevenue || (actual_total_count_revenue === expected_total_count_revenue);
 
-            if (isViewershipVerified || isRevenueVerified) { // One of the verifications should pass
-                if (isViewershipVerified) {
+            if (isViewershipVerified && isRevenueVerified) { // Both expected types must pass
+                if (expectsViewership) {
                     console.log(`Phase ${phase} verified: Expected count (viewership): ${expected_total_count_viewership}, actual count match (viewership): ${actual_total_count_viewership}`);
                 }
-                if (isRevenueVerified) {
+                if (expectsRevenue) {
                     console.log(`Phase ${phase} verified: Expected count (revenue): ${expected_total_count_revenue}, actual count match (revenue): ${actual_total_count_revenue}`);
                 }
                 return true;
             } else {
                 console.log(`Phase verification failed for phase: ${phase}`);
-                if (!isViewershipVerified) {
+                if (expectsViewership && !isViewershipVerified) {
                     console.log(`Viewership count mismatch: Expected count: ${expected_total_count_viewership}, Actual count: ${actual_total_count_viewership}`);
                 }
-                if (!isRevenueVerified) {
+                if (expectsRevenue && !isRevenueVerified) {
                     console.log(`Revenue count mismatch: Expected count: ${expected_total_count_revenue}, Actual count: ${actual_total_count_revenue}`);
                 }
             }

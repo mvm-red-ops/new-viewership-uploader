@@ -2177,22 +2177,28 @@ def display_configs(configs, sf_conn):
                     st.session_state.edit_mode = True
                     st.session_state.config_id = config['CONFIG_ID']
 
-                    # Load sample data back into dataframe for editing
+                    # Load metadata into session state
+                    partner_display = config['PARTNER'] if config['PARTNER'] != 'DEFAULT' else "(platform-wide)"
+                    st.session_state.platform = config['PLATFORM']
+                    st.session_state.partner = config['PARTNER'] if config['PARTNER'] != 'DEFAULT' else ""
+                    st.session_state.channel = config.get('CHANNEL', '')
+                    # Load territories array if available, otherwise fallback to single territory for backward compatibility
+                    territories_from_config = config.get('TERRITORIES', [])
+                    if not territories_from_config and config.get('TERRITORY'):
+                        territories_from_config = [config.get('TERRITORY')]
+                    st.session_state.selected_territories = territories_from_config if territories_from_config else []
+                    st.session_state.domain = config.get('DOMAIN', '')
+                    st.session_state.data_type = config.get('DATA_TYPE', '')
+
+                    # Load sample data back into dataframe for editing (if available)
                     if config.get('SAMPLE_DATA'):
                         sample_df = pd.DataFrame(config['SAMPLE_DATA'])
                         st.session_state.df = sample_df
-                        partner_display = config['PARTNER'] if config['PARTNER'] != 'DEFAULT' else "(platform-wide)"
                         st.session_state.filename = f"[Loaded from config] {config['PLATFORM']} - {partner_display}"
-                        st.session_state.platform = config['PLATFORM']
-                        st.session_state.partner = config['PARTNER'] if config['PARTNER'] != 'DEFAULT' else ""
-                        st.session_state.channel = config.get('CHANNEL', '')
-                        # Load territories array if available, otherwise fallback to single territory for backward compatibility
-                        territories_from_config = config.get('TERRITORIES', [])
-                        if not territories_from_config and config.get('TERRITORY'):
-                            territories_from_config = [config.get('TERRITORY')]
-                        st.session_state.selected_territories = territories_from_config if territories_from_config else []
-                        st.session_state.domain = config.get('DOMAIN', '')
-                        st.session_state.data_type = config.get('DATA_TYPE', '')
+                    else:
+                        # No sample data - user will need to upload a file to edit mappings
+                        st.session_state.df = None
+                        st.session_state.filename = None
 
                     # Switch to Upload & Map tab
                     st.session_state.active_tab = 0
@@ -2274,7 +2280,7 @@ def load_data_tab(sf_conn):
         quarter = st.selectbox(
             "Quarter *",
             options=["Q1", "Q2", "Q3", "Q4"],
-            index=2,  # Default to Q3
+            index=3,  # Default to Q4
             help="Required. Select the quarter for this data"
         )
 
@@ -2531,8 +2537,6 @@ def load_data_tab(sf_conn):
                                         if filtered_count > 0:
                                             st.info(f"  └─ Filtered out {filtered_count:,} zero-revenue records. Loading {len(transformed_df):,} records.")
 
-                                    all_transformed_dfs.append(transformed_df)
-
                                     # Calculate total hours of viewership
                                     if 'TOT_HOV' in transformed_df.columns:
                                         total_hov += transformed_df['TOT_HOV'].sum()
@@ -2547,6 +2551,9 @@ def load_data_tab(sf_conn):
                                     # Load to Snowflake with batch progress
                                     rows_loaded = sf_conn.load_to_platform_viewership(transformed_df, progress_callback=batch_progress)
                                     total_loaded += rows_loaded
+
+                                    # Only add to Lambda queue after successful Snowflake insert
+                                    all_transformed_dfs.append(transformed_df)
 
                                     batch_status.text("")  # Clear batch status
                                     st.success(f"✓ {info['name']}: {rows_loaded:,} rows loaded")
@@ -2710,7 +2717,7 @@ def apply_column_mappings(df, column_mappings, platform, channel, territory, dom
     if year:
         transformed_data['YEAR'] = [year] * num_rows
     if quarter:
-        transformed_data['QUARTER'] = [quarter] * num_rows
+        transformed_data['QUARTER'] = [quarter.lower()] * num_rows
     if month:
         transformed_data['MONTH'] = [month] * num_rows
 
