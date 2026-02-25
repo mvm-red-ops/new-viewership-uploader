@@ -732,6 +732,16 @@ class SnowflakeConnection:
             # Create INSERT statement with full database path
             full_table_name = f"{self.database}.{self.schema}.platform_viewership"
             print(f"[DEBUG] Inserting into table: {full_table_name}")
+
+            # Delete any unprocessed rows for the same platform+filename to prevent
+            # stale rows from failed uploads accumulating and breaking Lambda count checks
+            if 'PLATFORM' in df.columns and 'FILENAME' in df.columns:
+                platform_val = df['PLATFORM'].iloc[0]
+                filename_val = df['FILENAME'].iloc[0]
+                delete_sql = f"DELETE FROM {full_table_name} WHERE PLATFORM = '{platform_val}' AND FILENAME = '{filename_val}' AND PROCESSED IS NULL"
+                self.cursor.execute(delete_sql)
+                self.conn.commit()
+                print(f"[DEBUG] Cleared stale unprocessed rows for platform={platform_val}, filename={filename_val}")
             insert_sql = f"""
             INSERT INTO {full_table_name} ({column_names})
             VALUES ({placeholders})
