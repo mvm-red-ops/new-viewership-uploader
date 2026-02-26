@@ -2460,8 +2460,15 @@ def load_data_tab(sf_conn):
                             st.caption("📊 This shows what will be loaded to Snowflake (after transformations)")
                             st.dataframe(preview_df.head(10), use_container_width=True)
 
+                            # Show which columns were mapped (helps debug optional column issues)
+                            mapped_cols = list(preview_df.columns)
+                            if 'REF_ID' in mapped_cols:
+                                st.success(f"✓ REF_ID mapped: {preview_df['REF_ID'].iloc[0] if len(preview_df) > 0 else 'N/A'}")
+                            else:
+                                st.warning("⚠️ REF_ID not in output columns. Check template mapping.")
+
                             # Show summary
-                            st.caption(f"**Preview:** First 10 of {len(preview_df):,} rows that will be loaded")
+                            st.caption(f"**Preview:** First 10 of {len(preview_df):,} rows that will be loaded | **Columns:** {', '.join(mapped_cols)}")
                         except Exception as e:
                             st.warning(f"Could not generate transformed preview: {str(e)}")
                             st.caption("Showing raw data instead:")

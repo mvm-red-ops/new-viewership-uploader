@@ -259,10 +259,16 @@ async function setContentReferences(platform, filename, databaseName) {
     // OLD: Fallback for platforms that have platform_series field populated
     const setInternalSeries = `call ${databaseName}.public.set_internal_series_generic('${platform}', '${filename}')`
 
+    // Set ref_id from platform_content_id where ref_id is still NULL
+    // Handles platforms like Tubi where platform_content_id contains the ref_id value
+    // Uses CONTAINS matching: if platform_content_id contains a known ref_id, set ref_id to that value
+    // Only updates rows where ref_id IS NULL - safe to run always
+    const setRefIdFromContentId = `call ${databaseName}.public.SET_REF_ID_FROM_PLATFORM_CONTENT_ID('${platform}', '${filename}')`
+
     const dynamicAssetMatching = `call ${databaseName}.public.analyze_and_process_viewership_data_generic('${platform}', '${filename}');`;
     const setPhaseTwo = `call ${databaseName}.public.set_phase_generic('${platform}', '2', '${filename}')`
 
-    console.log({setDealParent, setChannel, setTerritory, setDealParentNormalized, sendAlert, setInternalSeriesExtraction, setInternalSeries, dynamicAssetMatching, setPhaseTwo, platform});
+    console.log({setDealParent, setChannel, setTerritory, setDealParentNormalized, sendAlert, setInternalSeriesExtraction, setInternalSeries, setRefIdFromContentId, dynamicAssetMatching, setPhaseTwo, platform});
     try {
         // Primary: Match against active_deals using RAW platform_* fields
         await runQueryWithoutBind(setDealParent)
@@ -278,6 +284,9 @@ async function setContentReferences(platform, filename, databaseName) {
         await runQueryWithoutBind(setInternalSeriesExtraction)
         // Asset matching: Set internal_series from platform_series field (OLD - fallback)
         await runQueryWithoutBind(setInternalSeries)
+        // Asset matching: Derive ref_id from platform_content_id where ref_id is NULL
+        // Enables REF_ID_ONLY bucket matching for platforms like Tubi
+        await runQueryWithoutBind(setRefIdFromContentId)
         // Asset matching: Match content using various strategies
         await runQueryWithoutBind(dynamicAssetMatching)
         // Update phase to 2
