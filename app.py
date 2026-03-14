@@ -2458,18 +2458,12 @@ def load_data_tab(sf_conn):
                             effective_channel = channel if channel else config.get('CHANNEL', '')
                             effective_territory = territory if territory else config.get('TERRITORY', '')
 
-                            preview_df = apply_column_mappings(
-                                file_info[0]['df'].head(50),
-                                column_mappings,
-                                platform,
-                                effective_channel,
-                                effective_territory,
-                                domain,
-                                file_info[0]['name'],
-                                year,
-                                quarter,
-                                month
-                            )
+                            preview_batches = get_quarterly_batches(file_info[0]['df'].head(50), column_mappings, data_type, month, quarter)
+                            preview_parts = [
+                                apply_column_mappings(b_df, column_mappings, platform, effective_channel, effective_territory, domain, file_info[0]['name'], year, quarter, b_month)
+                                for b_df, b_month in preview_batches
+                            ]
+                            preview_df = pd.concat(preview_parts, ignore_index=True) if len(preview_parts) > 1 else preview_parts[0]
 
                             st.caption("📊 This shows what will be loaded to Snowflake (after transformations)")
                             st.dataframe(preview_df.head(10), use_container_width=True)
@@ -2536,8 +2530,13 @@ def load_data_tab(sf_conn):
                                     effective_channel = channel if channel else config.get('CHANNEL', '')
                                     effective_territory = territory if territory else config.get('TERRITORY', '')
 
-                                    # Transform data according to mappings
-                                    transformed_df = apply_column_mappings(info['df'], column_mappings, platform, effective_channel, effective_territory, domain, info['name'], year, quarter, month)
+                                    # Transform data according to mappings (quarterly split if Revenue with no month/date)
+                                    batches = get_quarterly_batches(info['df'], column_mappings, data_type, month, quarter)
+                                    batch_parts = [
+                                        apply_column_mappings(b_df, column_mappings, platform, effective_channel, effective_territory, domain, info['name'], year, quarter, b_month)
+                                        for b_df, b_month in batches
+                                    ]
+                                    transformed_df = pd.concat(batch_parts, ignore_index=True) if len(batch_parts) > 1 else batch_parts[0]
 
                                     # Filter out records with zero or empty revenue
                                     if 'REVENUE' in transformed_df.columns:
@@ -2691,6 +2690,72 @@ def load_data_tab(sf_conn):
                         finally:
                             # Reset flag to allow future uploads
                             st.session_state.upload_in_progress = False
+
+def get_quarterly_batches(df, column_mappings, data_type, month, quarter):
+    """
+    If data_type is Revenue/Viewership_Revenue, no month is selected, and Date is not in the file,
+    return 3 copies of df — one per month in the quarter — with revenue divided by 3.
+    Otherwise return [(df, month)] for normal single-pass processing.
+    """
+    QUARTER_MONTHS = {
+        'q1': ['January', 'February', 'March'],
+        'q2': ['April', 'May', 'June'],
+        'q3': ['July', 'August', 'September'],
+        'q4': ['October', 'November', 'December'],
+    }
+
+    if data_type not in ('Revenue', 'Viewership_Revenue') or month or not quarter:
+        return [(df, month)]
+
+    # Check if Date source column exists in the file
+    date_mapping = column_mappings.get('Date')
+    date_source_col = None
+    if isinstance(date_mapping, dict):
+        date_source_col = date_mapping.get('source_column')
+    elif isinstance(date_mapping, str):
+        date_source_col = date_mapping
+
+    normalized_cols = {col.strip().lower(): col for col in df.columns}
+    date_in_file = date_source_col and (
+        date_source_col in df.columns or
+        date_source_col.strip().lower() in normalized_cols
+    )
+    if date_in_file:
+        return [(df, month)]
+
+    # Quarterly split — find revenue source column
+    months = QUARTER_MONTHS.get(quarter.lower(), [])
+    if not months:
+        return [(df, month)]
+
+    rev_mapping = column_mappings.get('Revenue')
+    rev_source_col = None
+    if isinstance(rev_mapping, dict):
+        rev_source_col = rev_mapping.get('source_column')
+    elif isinstance(rev_mapping, str):
+        rev_source_col = rev_mapping
+
+    actual_rev_col = None
+    if rev_source_col:
+        if rev_source_col in df.columns:
+            actual_rev_col = rev_source_col
+        else:
+            actual_rev_col = normalized_cols.get(rev_source_col.strip().lower())
+
+    batches = []
+    for m in months:
+        df_copy = df.copy()
+        if actual_rev_col:
+            df_copy[actual_rev_col] = pd.to_numeric(
+                df_copy[actual_rev_col].astype(str)
+                    .str.replace('$', '', regex=False)
+                    .str.replace(',', '', regex=False)
+                    .str.replace(' ', '', regex=False),
+                errors='coerce'
+            ) / 3
+        batches.append((df_copy, m))
+    return batches
+
 
 def apply_column_mappings(df, column_mappings, platform, channel, territory, domain, filename=None, year=None, quarter=None, month=None):
     """
