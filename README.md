@@ -44,7 +44,13 @@ python sql/deploy/deploy.py --env prod
 │   └── utils/                 # Utility scripts
 │
 ├── docs/                   # Documentation
-└── scripts/                # Deployment & setup scripts
+├── scripts/                # Deployment & setup scripts
+├── youtube_api/            # YouTube Analytics integration
+│   ├── mcp-server.py           # MCP server for AI agents
+│   ├── API_SPECS.md            # YouTube API specifications
+│   ├── mcp-config.json         # MCP configuration
+│   └── scripts/                # OAuth setup & utilities
+└── sample_data/            # Sample data files (Freevee, Roku, etc.)
 ```
 
 ## 🎯 Features
@@ -63,9 +69,40 @@ Edit `config.py` or set environment variables for Snowflake and AWS credentials.
 
 See `sql/deploy/config.yaml` for environment-specific database names.
 
+## 🎬 YouTube Integration
+
+### Fetch YouTube Data
+
+```bash
+# Fetch Q4 2025 daily metrics (all videos, all metrics)
+python fetch_youtube_q4_2025_daily_all_metrics.py
+
+# Output: youtube_q4_2025_daily_all_metrics.csv
+# Columns: date, video_id, title, views, hours_watched, revenue, etc.
+# Ready to upload via YouTube template
+```
+
+### MCP Server (AI Agents)
+
+```bash
+# Start YouTube Analytics MCP server
+cd youtube_api
+python mcp-server.py
+```
+
+**Tools available**:
+- `fetch_channel_summary` - Channel analytics overview
+- `fetch_video_analytics` - Video-specific metrics
+- `fetch_top_videos` - Top performers
+- `fetch_daily_trends` - Daily trend data
+
+See **[youtube_api/API_SPECS.md](youtube_api/API_SPECS.md)** for full API documentation.
+
 ## 📚 Documentation
 
 - **[CHEATSHEET.md](CHEATSHEET.md)** ⭐ **START HERE** - All commands you need
+- **[KNOWLEDGE_BASE.md](KNOWLEDGE_BASE.md)** 📖 Comprehensive system documentation
+- **[youtube_api/API_SPECS.md](youtube_api/API_SPECS.md)** 🎬 YouTube API specifications
 - **[DEPLOYMENT_VERIFICATION.md](DEPLOYMENT_VERIFICATION.md)** - How verification works
 - **[docs/ASSET_MATCHING_ARCHITECTURE.md](docs/ASSET_MATCHING_ARCHITECTURE.md)** - Data flow & architecture
 - **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** - Common issues and solutions

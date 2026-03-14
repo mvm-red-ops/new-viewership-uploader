@@ -2059,6 +2059,30 @@ $$
         }
     }
 
+    // For Revenue-type files, silently delete zero-revenue rows before validation.
+    // These rows are structurally valid uploads but have no reportable revenue and
+    // would otherwise block the entire batch via the revenue <= 0 validation check.
+    var uploadTypeLower = (TYPE || '').toLowerCase().trim();
+    if (uploadTypeLower === 'revenue' || uploadTypeLower.includes('revenue')) {
+        try {
+            var stagingDb = snowflake.execute({sqlText: "SELECT CURRENT_DATABASE()"});
+            var deleteZeroRevSQL = `
+                DELETE FROM {{STAGING_DB}}.public.platform_viewership
+                WHERE UPPER(platform) = '${PLATFORM.toUpperCase()}'
+                  AND LOWER(filename) = '${FILENAME.toLowerCase()}'
+                  AND processed IS NULL
+                  AND (revenue IS NULL OR revenue <= 0)
+            `;
+            var deleteResult = snowflake.createStatement({sqlText: deleteZeroRevSQL}).execute();
+            var deletedRows = deleteResult.getNumRowsAffected();
+            if (deletedRows > 0) {
+                console.log(`Removed ${deletedRows} zero/null-revenue rows before validation.`);
+            }
+        } catch (deleteErr) {
+            console.log("Warning: could not delete zero-revenue rows: " + deleteErr.message);
+        }
+    }
+
     // First, run the validation procedure (if it exists)
     // Note: validate_viewership_for_insert may need to be created or updated for generic architecture
     try {

@@ -1,0 +1,7 @@
+﻿domain,platform,partner,channel,territory,amount,department,title,type,description,label,register name,payment date,year,quarter,month
+Owned and Operated,Zype,android_app,VOD,United States,-46.62,android_app,OAO AD Serving,android_app,Android Expense,Expense,OAO AD Serving,11/1/25,2025,q4,11
+Owned and Operated,Zype,android_tv,VOD,United States,-19.09,android_tv,OAO AD Serving,android_tv,Android TV Expense,Expense,OAO AD Serving,11/1/25,2025,q4,11
+Owned and Operated,Zype,Apple TV,VOD,United States,-3.76,Apple TV,OAO AD Serving,Apple TV,AppleTV Expense,Expense,OAO AD Serving,11/1/25,2025,q4,11
+Owned and Operated,Zype,firetv,VOD,United States,-49.85,firetv,OAO AD Serving,firetv,Fire TV Expense,Expense,OAO AD Serving,11/1/25,2025,q4,11
+Owned and Operated,Zype,ios_app,VOD,United States,-170.59,ios_app,OAO AD Serving,ios_app,IOS Exoense,Expense,OAO AD Serving,11/1/25,2025,q4,11
+Owned and Operated,Zype,roku_app,VOD,United States,-710.09,roku_app,OAO AD Serving,roku_app,Roku Expense,Expense,OAO AD Serving,11/1/25,2025,q4,11

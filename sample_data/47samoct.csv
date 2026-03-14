@@ -1,0 +1,7 @@
+﻿domain,platform,partner,channel,territory,amount,department,title,type,description,label,register name,payment date,year,quarter,month
+Owned and Operated,Zype,android_app,VOD,United States,11.26,android_app,47 Samurai,android_app,Android Revenue,Revenue,"47 Samurai, LLC",10/1/25,2025,q4,10
+Owned and Operated,Zype,android_tv,VOD,United States,4.15,android_tv,47 Samurai,android_tv,Android TV Revenue,Revenue,"47 Samurai, LLC",10/1/25,2025,q4,10
+Owned and Operated,Zype,Apple TV,VOD,United States,0.6,Apple TV,47 Samurai,Apple TV,AppleTV Revenue,Revenue,"47 Samurai, LLC",10/1/25,2025,q4,10
+Owned and Operated,Zype,firetv,VOD,United States,10.5,firetv,47 Samurai,firetv,Fire TV Revenue,Revenue,"47 Samurai, LLC",10/1/25,2025,q4,10
+Owned and Operated,Zype,ios_app,VOD,United States,38.32,ios_app,47 Samurai,ios_app,IOS Revenue,Revenue,"47 Samurai, LLC",10/1/25,2025,q4,10
+Owned and Operated,Zype,roku_app,VOD,United States,152.76,roku_app,47 Samurai,roku_app,Roku Revenue,Revenue,"47 Samurai, LLC",10/1/25,2025,q4,10

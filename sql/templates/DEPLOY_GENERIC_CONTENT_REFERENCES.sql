@@ -122,11 +122,11 @@ try {
         )
         JOIN {{METADATA_DB}}.public.series s ON (s.id = e.series_id)
         JOIN {{METADATA_DB}}.public.metadata m ON (
-            LOWER(REGEXP_REPLACE(TRIM(m.title), '[^A-Za-z0-9]', '')) =
-            LOWER(REGEXP_REPLACE(TRIM(v.platform_content_name), '[^A-Za-z0-9]', ''))
+            LOWER(REGEXP_REPLACE(TRIM(TRANSLATE(m.title, 'áéíóúñüàèìòùâêîôûãõÁÉÍÓÚÑÜÀÈÌÒÙÂÊÎÔÛÃÕ', 'aeiounuaeiouaeiouaoAEIOUNUAEIOUAEIOUAO')), '[^A-Za-z0-9]', '')) =
+            LOWER(REGEXP_REPLACE(TRIM(TRANSLATE(v.platform_content_name, 'áéíóúñüàèìòùâêîôûãõÁÉÍÓÚÑÜÀÈÌÒÙÂÊÎÔÛÃÕ', 'aeiounuaeiouaeiouaoAEIOUNUAEIOUAEIOUAO')), '[^A-Za-z0-9]', ''))
             OR
-            LOWER(REGEXP_REPLACE(TRIM(m.clean_title),  '[^A-Za-z0-9]', '')) =
-            LOWER(REGEXP_REPLACE(TRIM(v.platform_content_name),  '[^A-Za-z0-9]', ''))
+            LOWER(REGEXP_REPLACE(TRIM(TRANSLATE(m.clean_title, 'áéíóúñüàèìòùâêîôûãõÁÉÍÓÚÑÜÀÈÌÒÙÂÊÎÔÛÃÕ', 'aeiounuaeiouaeiouaoAEIOUNUAEIOUAEIOUAO')), '[^A-Za-z0-9]', '')) =
+            LOWER(REGEXP_REPLACE(TRIM(TRANSLATE(v.platform_content_name, 'áéíóúñüàèìòùâêîôûãõÁÉÍÓÚÑÜÀÈÌÒÙÂÊÎÔÛÃÕ', 'aeiounuaeiouaeiouaoAEIOUNUAEIOUAEIOUAO')), '[^A-Za-z0-9]', ''))
         )
         WHERE v.platform = '${platformArg}'
             AND v.processed IS NULL
@@ -334,11 +334,11 @@ try {
         JOIN {{METADATA_DB}}.public.episode e ON (v.ref_id = e.ref_id)
         JOIN {{METADATA_DB}}.public.series s ON (s.id = e.series_id)
         JOIN {{METADATA_DB}}.public.metadata m ON (
-            LOWER(REGEXP_REPLACE(TRIM(m.title), '[^A-Za-z0-9]', '')) =
-            LOWER(REGEXP_REPLACE(TRIM(v.platform_content_name), '[^A-Za-z0-9]', ''))
+            LOWER(REGEXP_REPLACE(TRIM(TRANSLATE(m.title, 'áéíóúñüàèìòùâêîôûãõÁÉÍÓÚÑÜÀÈÌÒÙÂÊÎÔÛÃÕ', 'aeiounuaeiouaeiouaoAEIOUNUAEIOUAEIOUAO')), '[^A-Za-z0-9]', '')) =
+            LOWER(REGEXP_REPLACE(TRIM(TRANSLATE(v.platform_content_name, 'áéíóúñüàèìòùâêîôûãõÁÉÍÓÚÑÜÀÈÌÒÙÂÊÎÔÛÃÕ', 'aeiounuaeiouaeiouaoAEIOUNUAEIOUAEIOUAO')), '[^A-Za-z0-9]', ''))
             OR
-            LOWER(REGEXP_REPLACE(TRIM(m.clean_title),  '[^A-Za-z0-9]', '')) =
-            LOWER(REGEXP_REPLACE(TRIM(v.platform_content_name),  '[^A-Za-z0-9]', ''))
+            LOWER(REGEXP_REPLACE(TRIM(TRANSLATE(m.clean_title, 'áéíóúñüàèìòùâêîôûãõÁÉÍÓÚÑÜÀÈÌÒÙÂÊÎÔÛÃÕ', 'aeiounuaeiouaeiouaoAEIOUNUAEIOUAEIOUAO')), '[^A-Za-z0-9]', '')) =
+            LOWER(REGEXP_REPLACE(TRIM(TRANSLATE(v.platform_content_name, 'áéíóúñüàèìòùâêîôûãõÁÉÍÓÚÑÜÀÈÌÒÙÂÊÎÔÛÃÕ', 'aeiounuaeiouaeiouaoAEIOUNUAEIOUAEIOUAO')), '[^A-Za-z0-9]', ''))
         )
         WHERE v.platform = '${platformArg}'
             AND v.processed IS NULL
@@ -511,11 +511,11 @@ try {
         JOIN {{METADATA_DB}}.public.episode e ON (v.ref_id = e.ref_id)
         JOIN {{METADATA_DB}}.public.series s ON (s.id = e.series_id)
         JOIN {{METADATA_DB}}.public.metadata m ON (
-            LOWER(REGEXP_REPLACE(TRIM(m.title), '[^A-Za-z0-9]', '')) =
-            LOWER(REGEXP_REPLACE(TRIM(v.platform_content_name), '[^A-Za-z0-9]', ''))
+            LOWER(REGEXP_REPLACE(TRIM(TRANSLATE(m.title, 'áéíóúñüàèìòùâêîôûãõÁÉÍÓÚÑÜÀÈÌÒÙÂÊÎÔÛÃÕ', 'aeiounuaeiouaeiouaoAEIOUNUAEIOUAEIOUAO')), '[^A-Za-z0-9]', '')) =
+            LOWER(REGEXP_REPLACE(TRIM(TRANSLATE(v.platform_content_name, 'áéíóúñüàèìòùâêîôûãõÁÉÍÓÚÑÜÀÈÌÒÙÂÊÎÔÛÃÕ', 'aeiounuaeiouaeiouaoAEIOUNUAEIOUAEIOUAO')), '[^A-Za-z0-9]', ''))
             OR
-            LOWER(REGEXP_REPLACE(TRIM(m.clean_title),  '[^A-Za-z0-9]', '')) =
-            LOWER(REGEXP_REPLACE(TRIM(v.platform_content_name),  '[^A-Za-z0-9]', ''))
+            LOWER(REGEXP_REPLACE(TRIM(TRANSLATE(m.clean_title, 'áéíóúñüàèìòùâêîôûãõÁÉÍÓÚÑÜÀÈÌÒÙÂÊÎÔÛÃÕ', 'aeiounuaeiouaeiouaoAEIOUNUAEIOUAEIOUAO')), '[^A-Za-z0-9]', '')) =
+            LOWER(REGEXP_REPLACE(TRIM(TRANSLATE(v.platform_content_name, 'áéíóúñüàèìòùâêîôûãõÁÉÍÓÚÑÜÀÈÌÒÙÂÊÎÔÛÃÕ', 'aeiounuaeiouaeiouaoAEIOUNUAEIOUAEIOUAO')), '[^A-Za-z0-9]', ''))
         )
         WHERE v.platform = '${platformArg}'
             AND v.processed IS NULL
@@ -694,11 +694,11 @@ try {
             LOWER({{UPLOAD_DB}}.public.extract_primary_title(s.titles)) = LOWER(v.internal_series)
         )
         JOIN {{METADATA_DB}}.public.metadata m ON (
-            LOWER(REGEXP_REPLACE(TRIM(m.title), '[^A-Za-z0-9]', '')) =
-            LOWER(REGEXP_REPLACE(TRIM(v.platform_content_name), '[^A-Za-z0-9]', ''))
+            LOWER(REGEXP_REPLACE(TRIM(TRANSLATE(m.title, 'áéíóúñüàèìòùâêîôûãõÁÉÍÓÚÑÜÀÈÌÒÙÂÊÎÔÛÃÕ', 'aeiounuaeiouaeiouaoAEIOUNUAEIOUAEIOUAO')), '[^A-Za-z0-9]', '')) =
+            LOWER(REGEXP_REPLACE(TRIM(TRANSLATE(v.platform_content_name, 'áéíóúñüàèìòùâêîôûãõÁÉÍÓÚÑÜÀÈÌÒÙÂÊÎÔÛÃÕ', 'aeiounuaeiouaeiouaoAEIOUNUAEIOUAEIOUAO')), '[^A-Za-z0-9]', ''))
             OR
-            LOWER(REGEXP_REPLACE(TRIM(m.clean_title),  '[^A-Za-z0-9]', '')) =
-            LOWER(REGEXP_REPLACE(TRIM(v.platform_content_name),  '[^A-Za-z0-9]', ''))
+            LOWER(REGEXP_REPLACE(TRIM(TRANSLATE(m.clean_title, 'áéíóúñüàèìòùâêîôûãõÁÉÍÓÚÑÜÀÈÌÒÙÂÊÎÔÛÃÕ', 'aeiounuaeiouaeiouaoAEIOUNUAEIOUAEIOUAO')), '[^A-Za-z0-9]', '')) =
+            LOWER(REGEXP_REPLACE(TRIM(TRANSLATE(v.platform_content_name, 'áéíóúñüàèìòùâêîôûãõÁÉÍÓÚÑÜÀÈÌÒÙÂÊÎÔÛÃÕ', 'aeiounuaeiouaeiouaoAEIOUNUAEIOUAEIOUAO')), '[^A-Za-z0-9]', ''))
         )
         WHERE v.platform = '${platformArg}'
             AND v.processed IS NULL
@@ -943,11 +943,11 @@ try {
                     {{STAGING_DB}}.public.platform_viewership v
                 JOIN {{UPLOAD_DB}}.PUBLIC.TEMP_${platformArg.toUpperCase()}_${bucketName}_BUCKET b ON (v.id = b.id)
                 JOIN {{METADATA_DB}}.public.metadata m ON (
-                    LOWER(REGEXP_REPLACE(TRIM(m.title),  '[^A-Za-z0-9]', '')) =
-                    LOWER(REGEXP_REPLACE(TRIM(v.platform_content_name),  '[^A-Za-z0-9]', ''))
+                    LOWER(REGEXP_REPLACE(TRIM(TRANSLATE(m.title, 'áéíóúñüàèìòùâêîôûãõÁÉÍÓÚÑÜÀÈÌÒÙÂÊÎÔÛÃÕ', 'aeiounuaeiouaeiouaoAEIOUNUAEIOUAEIOUAO')), '[^A-Za-z0-9]', '')) =
+                    LOWER(REGEXP_REPLACE(TRIM(TRANSLATE(v.platform_content_name, 'áéíóúñüàèìòùâêîôûãõÁÉÍÓÚÑÜÀÈÌÒÙÂÊÎÔÛÃÕ', 'aeiounuaeiouaeiouaoAEIOUNUAEIOUAEIOUAO')), '[^A-Za-z0-9]', ''))
                     OR
-                    LOWER(REGEXP_REPLACE(TRIM(m.clean_title),  '[^A-Za-z0-9]', '')) =
-                    LOWER(REGEXP_REPLACE(TRIM(v.platform_content_name),  '[^A-Za-z0-9]', ''))
+                    LOWER(REGEXP_REPLACE(TRIM(TRANSLATE(m.clean_title, 'áéíóúñüàèìòùâêîôûãõÁÉÍÓÚÑÜÀÈÌÒÙÂÊÎÔÛÃÕ', 'aeiounuaeiouaeiouaoAEIOUNUAEIOUAEIOUAO')), '[^A-Za-z0-9]', '')) =
+                    LOWER(REGEXP_REPLACE(TRIM(TRANSLATE(v.platform_content_name, 'áéíóúñüàèìòùâêîôûãõÁÉÍÓÚÑÜÀÈÌÒÙÂÊÎÔÛÃÕ', 'aeiounuaeiouaeiouaoAEIOUNUAEIOUAEIOUAO')), '[^A-Za-z0-9]', ''))
                 )
                 JOIN {{METADATA_DB}}.public.episode e ON (e.ref_id = m.ref_id)
                 JOIN {{METADATA_DB}}.public.series s ON (s.id = e.series_id)
@@ -1126,11 +1126,11 @@ try {
             {{STAGING_DB}}.public.platform_viewership v
         JOIN {{UPLOAD_DB}}.PUBLIC.TEMP_${platformArg.toUpperCase()}_${bucketName}_BUCKET b ON (v.id = b.id)
         JOIN {{METADATA_DB}}.public.metadata m ON (
-            LOWER(REGEXP_REPLACE(TRIM(m.title),  '[^A-Za-z0-9]', '')) =
-            LOWER(REGEXP_REPLACE(TRIM(v.platform_content_name),  '[^A-Za-z0-9]', ''))
+            LOWER(REGEXP_REPLACE(TRIM(TRANSLATE(m.title, 'áéíóúñüàèìòùâêîôûãõÁÉÍÓÚÑÜÀÈÌÒÙÂÊÎÔÛÃÕ', 'aeiounuaeiouaeiouaoAEIOUNUAEIOUAEIOUAO')), '[^A-Za-z0-9]', '')) =
+            LOWER(REGEXP_REPLACE(TRIM(TRANSLATE(v.platform_content_name, 'áéíóúñüàèìòùâêîôûãõÁÉÍÓÚÑÜÀÈÌÒÙÂÊÎÔÛÃÕ', 'aeiounuaeiouaeiouaoAEIOUNUAEIOUAEIOUAO')), '[^A-Za-z0-9]', ''))
             OR
-            LOWER(REGEXP_REPLACE(TRIM(m.clean_title),  '[^A-Za-z0-9]', '')) =
-            LOWER(REGEXP_REPLACE(TRIM(v.platform_content_name),  '[^A-Za-z0-9]', ''))
+            LOWER(REGEXP_REPLACE(TRIM(TRANSLATE(m.clean_title, 'áéíóúñüàèìòùâêîôûãõÁÉÍÓÚÑÜÀÈÌÒÙÂÊÎÔÛÃÕ', 'aeiounuaeiouaeiouaoAEIOUNUAEIOUAEIOUAO')), '[^A-Za-z0-9]', '')) =
+            LOWER(REGEXP_REPLACE(TRIM(TRANSLATE(v.platform_content_name, 'áéíóúñüàèìòùâêîôûãõÁÉÍÓÚÑÜÀÈÌÒÙÂÊÎÔÛÃÕ', 'aeiounuaeiouaeiouaoAEIOUNUAEIOUAEIOUAO')), '[^A-Za-z0-9]', ''))
         )
         JOIN {{METADATA_DB}}.public.episode e ON (e.ref_id = m.ref_id)
         JOIN {{METADATA_DB}}.public.series s ON (s.id = e.series_id)

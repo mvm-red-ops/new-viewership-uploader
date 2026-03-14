@@ -1341,12 +1341,19 @@ def upload_and_map_tab(sf_conn):
                     # Determine file type
                     file_type = 'csv' if uploaded_file.name.endswith('.csv') else 'xlsx'
 
-                    # Read file with header row
+                    # Read file with logo/banner row detection
                     uploaded_file.seek(0)
                     if file_type == 'csv':
-                        df = pd.read_csv(uploaded_file)
+                        df_peek = pd.read_csv(uploaded_file, header=None, nrows=25)
+                        header_row = detect_header_row(df_peek, max_rows_to_check=25)
+                        uploaded_file.seek(0)
+                        df = pd.read_csv(uploaded_file, header=header_row)
                     else:
-                        df = pd.read_excel(uploaded_file)
+                        df_peek = pd.read_excel(uploaded_file, header=None, nrows=25)
+                        header_row = detect_header_row(df_peek, max_rows_to_check=25)
+                        uploaded_file.seek(0)
+                        df = pd.read_excel(uploaded_file, header=header_row)
+                    df.columns = df.columns.str.strip()
 
                     # Detect and transform wide format (dates as columns) to long format (dates as rows)
                     df, was_transformed, filtered_count = detect_and_transform(df)
@@ -2382,11 +2389,18 @@ def load_data_tab(sf_conn):
 
                 for uploaded_file in uploaded_files:
                     try:
-                        # Read the file
+                        # Read the file with logo/banner row detection
                         if uploaded_file.name.endswith('.csv'):
-                            df = pd.read_csv(uploaded_file)
+                            df_peek = pd.read_csv(uploaded_file, header=None, nrows=15)
+                            header_row = detect_header_row(df_peek)
+                            uploaded_file.seek(0)
+                            df = pd.read_csv(uploaded_file, header=header_row)
                         else:
-                            df = pd.read_excel(uploaded_file)
+                            df_peek = pd.read_excel(uploaded_file, header=None, nrows=15)
+                            header_row = detect_header_row(df_peek)
+                            uploaded_file.seek(0)
+                            df = pd.read_excel(uploaded_file, header=header_row)
+                        df.columns = df.columns.str.strip()
 
                         # Filter out completely empty rows (all NaN/null values)
                         original_count = len(df)
@@ -2870,6 +2884,17 @@ def apply_column_mappings(df, column_mappings, platform, channel, territory, dom
                     # No transformation, just store as usual
                     transformed_data[std_col_name] = source_data
         elif source_col and source_col != "":
+            # Special case: Date column missing from file but year+month provided — synthesize from UI selections
+            if target_col == 'Date' and year and month:
+                month_map = {"January": "01", "February": "02", "March": "03", "April": "04",
+                             "May": "05", "June": "06", "July": "07", "August": "08",
+                             "September": "09", "October": "10", "November": "11", "December": "12"}
+                month_num = month_map.get(month, "01")
+                synthesized_date = f"{year}-{month_num}-01"
+                transformed_data['DATE'] = [synthesized_date] * num_rows
+                transformed_data['YEAR_MONTH_DAY'] = [f"{year}{month_num}01"] * num_rows
+                continue
+
             # Column not found - this is a configuration error
             # Show clear error message instead of silently treating as hardcoded value
 
