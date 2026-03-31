@@ -2209,6 +2209,7 @@ def display_configs(configs, sf_conn):
 
                     # Switch to Upload & Map tab
                     st.session_state.active_tab = 0
+                    st.session_state.selected_tab = "📤 Upload & Map"
                     st.rerun()
 
                 if st.button("🗑️ Delete", key=f"delete_{config['CONFIG_ID']}", use_container_width=True):
@@ -2454,13 +2455,14 @@ def load_data_tab(sf_conn):
                                     while isinstance(unwrapped, dict) and 'hardcoded_value' in unwrapped:
                                         unwrapped = unwrapped['hardcoded_value']
                                     column_mappings[key] = {'hardcoded_value': unwrapped}
-                            # Use template's channel/territory if user didn't provide them
+                            # Use template's partner/channel/territory if user didn't provide them
+                            effective_partner = partner if partner else config.get('PARTNER', '')
                             effective_channel = channel if channel else config.get('CHANNEL', '')
                             effective_territory = territory if territory else config.get('TERRITORY', '')
 
                             preview_batches = get_quarterly_batches(file_info[0]['df'].head(50), column_mappings, data_type, month, quarter)
                             preview_parts = [
-                                apply_column_mappings(b_df, column_mappings, platform, effective_channel, effective_territory, domain, file_info[0]['name'], year, quarter, b_month)
+                                apply_column_mappings(b_df, column_mappings, platform, effective_channel, effective_territory, domain, file_info[0]['name'], year, quarter, b_month, partner=effective_partner)
                                 for b_df, b_month in preview_batches
                             ]
                             preview_df = pd.concat(preview_parts, ignore_index=True) if len(preview_parts) > 1 else preview_parts[0]
@@ -2525,15 +2527,15 @@ def load_data_tab(sf_conn):
                                 batch_status.text("")
 
                                 try:
-                                    # Use template's channel/territory if user didn't provide them
-                                    # This handles legacy templates where channel/territory are in metadata, not column_mappings
+                                    # Use template's partner/channel/territory if user didn't provide them
+                                    effective_partner = partner if partner else config.get('PARTNER', '')
                                     effective_channel = channel if channel else config.get('CHANNEL', '')
                                     effective_territory = territory if territory else config.get('TERRITORY', '')
 
                                     # Transform data according to mappings (quarterly split if Revenue with no month/date)
                                     batches = get_quarterly_batches(info['df'], column_mappings, data_type, month, quarter)
                                     batch_parts = [
-                                        apply_column_mappings(b_df, column_mappings, platform, effective_channel, effective_territory, domain, info['name'], year, quarter, b_month)
+                                        apply_column_mappings(b_df, column_mappings, platform, effective_channel, effective_territory, domain, info['name'], year, quarter, b_month, partner=effective_partner)
                                         for b_df, b_month in batches
                                     ]
                                     transformed_df = pd.concat(batch_parts, ignore_index=True) if len(batch_parts) > 1 else batch_parts[0]
@@ -2757,7 +2759,7 @@ def get_quarterly_batches(df, column_mappings, data_type, month, quarter):
     return batches
 
 
-def apply_column_mappings(df, column_mappings, platform, channel, territory, domain, filename=None, year=None, quarter=None, month=None):
+def apply_column_mappings(df, column_mappings, platform, channel, territory, domain, filename=None, year=None, quarter=None, month=None, partner=None):
     """
     Apply column mappings to transform uploaded data
 
@@ -2791,7 +2793,9 @@ def apply_column_mappings(df, column_mappings, platform, channel, territory, dom
     if filename:
         transformed_data['FILENAME'] = [filename] * num_rows
 
-    # Use channel, territory, and domain if provided (map to correct column names)
+    # Use partner, channel, territory, and domain if provided (map to correct column names)
+    if partner:
+        transformed_data['PLATFORM_PARTNER_NAME'] = [partner] * num_rows
     if channel:
         transformed_data['PLATFORM_CHANNEL_NAME'] = [channel] * num_rows
     if territory:
