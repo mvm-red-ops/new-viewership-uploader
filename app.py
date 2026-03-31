@@ -1252,33 +1252,44 @@ def upload_and_map_tab(sf_conn):
 
         # Fetch platforms from Snowflake (cached)
         platforms = get_cached_platforms(sf_conn)
+        _edit_platform = st.session_state.get('platform', '') if st.session_state.get('edit_mode') else ''
         if platforms:
+            _plat_opts = [""] + platforms
+            _plat_idx = _plat_opts.index(_edit_platform) if _edit_platform in _plat_opts else 0
             platform = st.selectbox(
                 "Platform *",
-                options=[""] + platforms,
+                options=_plat_opts,
+                index=_plat_idx,
                 help="Required. Select a platform from the list"
             )
         else:
-            # Fallback to text input if query fails
-            platform = st.text_input("Platform *", help="Required. e.g., YouTube, Netflix, Amazon Prime")
+            platform = st.text_input("Platform *", value=_edit_platform, help="Required. e.g., YouTube, Netflix, Amazon Prime")
 
         # Partner dropdown (optional)
         partners = get_cached_partners(sf_conn)
+        _edit_partner = st.session_state.get('partner', '') if st.session_state.get('edit_mode') else ''
         if partners:
+            _part_opts = [""] + partners
+            _part_idx = _part_opts.index(_edit_partner) if _edit_partner in _part_opts else 0
             partner = st.selectbox(
                 "Partner (optional)",
-                options=[""] + partners,
+                options=_part_opts,
+                index=_part_idx,
                 help="Optional. Select a partner from the list or leave blank for platform-wide template"
             )
         else:
-            partner = st.text_input("Partner (optional)", help="Optional. Enter partner name or leave blank for platform-wide template")
+            partner = st.text_input("Partner (optional)", value=_edit_partner, help="Optional. Enter partner name or leave blank for platform-wide template")
 
         # Channel dropdown (optional)
         channels = get_cached_channels(sf_conn)
+        _edit_channel = st.session_state.get('channel', '') if st.session_state.get('edit_mode') else ''
         if channels:
+            _chan_opts = [""] + channels
+            _chan_idx = _chan_opts.index(_edit_channel) if _edit_channel in _chan_opts else 0
             channel = st.selectbox(
                 "Channel (optional)",
-                options=[""] + channels,
+                options=_chan_opts,
+                index=_chan_idx,
                 help="Optional. Select a channel from the list"
             )
         else:
@@ -1302,9 +1313,13 @@ def upload_and_map_tab(sf_conn):
             selected_territories = []
 
         # Additional metadata fields
+        _edit_domain = st.session_state.get('domain', '') if st.session_state.get('edit_mode') else ''
+        _domain_opts = ["", "Distribution Partners", "Owned and Operated"]
+        _domain_idx = _domain_opts.index(_edit_domain) if _edit_domain in _domain_opts else 0
         domain = st.selectbox(
             "Domain",
-            options=["", "Distribution Partners", "Owned and Operated"],
+            options=_domain_opts,
+            index=_domain_idx,
             help="Select domain type"
         )
 
@@ -1315,10 +1330,15 @@ def upload_and_map_tab(sf_conn):
             "Revenue by Episode": "Revenue",
             "Combined Metrics by Episode": "Viewership_Revenue"
         }
-
+        data_type_reverse_map_pre = {v: k for k, v in data_type_labels.items()}
+        _edit_data_type = st.session_state.get('data_type', '') if st.session_state.get('edit_mode') else ''
+        _edit_data_type_display = data_type_reverse_map_pre.get(_edit_data_type, '')
+        _dt_opts = ["", "Hours/Mins by Episode", "Revenue by Episode", "Combined Metrics by Episode"]
+        _dt_idx = _dt_opts.index(_edit_data_type_display) if _edit_data_type_display in _dt_opts else 0
         data_type_display = st.selectbox(
             "Data Type *",
-            options=["", "Hours/Mins by Episode", "Revenue by Episode", "Combined Metrics by Episode"],
+            options=_dt_opts,
+            index=_dt_idx,
             help="Required. Select the type of data in this template. This determines which metrics columns are required."
         )
 
@@ -2558,6 +2578,17 @@ def load_data_tab(sf_conn):
                                         filtered_count = original_count - len(transformed_df)
                                         if filtered_count > 0:
                                             st.info(f"  └─ Filtered out {filtered_count:,} zero-revenue records. Loading {len(transformed_df):,} records.")
+
+                                    # Filter out summary/total rows with no content identifier
+                                    if 'PLATFORM_CONTENT_ID' in transformed_df.columns:
+                                        pre_filter = len(transformed_df)
+                                        transformed_df = transformed_df[
+                                            transformed_df['PLATFORM_CONTENT_ID'].notna() &
+                                            (transformed_df['PLATFORM_CONTENT_ID'].astype(str).str.strip() != '')
+                                        ]
+                                        removed = pre_filter - len(transformed_df)
+                                        if removed > 0:
+                                            st.info(f"  └─ Filtered out {removed:,} row(s) with no content identifier (e.g. summary/total rows).")
 
                                     # Calculate total hours of viewership
                                     if 'TOT_HOV' in transformed_df.columns:
