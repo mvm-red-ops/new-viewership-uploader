@@ -1376,7 +1376,8 @@ def upload_and_map_tab(sf_conn):
                     df.columns = df.columns.str.strip()
 
                     # Detect and transform wide format (dates as columns) to long format (dates as rows)
-                    df, was_transformed, filtered_count = detect_and_transform(df)
+                    uploaded_file.seek(0)
+                    df, was_transformed, filtered_count = detect_and_transform(df, file_buffer=uploaded_file, file_type=file_type)
 
                     if was_transformed:
                         st.success("✅ Wide format detected and transformed to long format! Dates unpivoted from columns to rows.")
@@ -2432,7 +2433,9 @@ def load_data_tab(sf_conn):
                             st.info(f"🧹 Removed {empty_rows_removed:,} empty rows from {uploaded_file.name}")
 
                         # Detect and transform wide format (dates as columns) to long format (dates as rows)
-                        df, was_transformed, filtered_count = detect_and_transform(df)
+                        bulk_file_type = 'csv' if uploaded_file.name.endswith('.csv') else 'xlsx'
+                        uploaded_file.seek(0)
+                        df, was_transformed, filtered_count = detect_and_transform(df, file_buffer=uploaded_file, file_type=bulk_file_type)
 
                         if was_transformed:
                             st.info(f"📊 Wide format detected in {uploaded_file.name} - transformed to long format ({len(df)} records)")
