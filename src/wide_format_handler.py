@@ -311,19 +311,53 @@ def read_wide_format_with_multiheader(file_path_or_buffer) -> pd.DataFrame:
             return pd.read_excel(file_path_or_buffer)
 
 
-def detect_and_transform(df: pd.DataFrame, file_buffer=None) -> Tuple[pd.DataFrame, bool, int]:
+def _has_repeated_metric_columns(df: pd.DataFrame, min_repeats: int = 5) -> bool:
+    """
+    Detect columns that follow 'MetricName', 'MetricName.1', 'MetricName.2', ... pattern.
+    This happens when header detection picks the metric sub-header row (e.g. Roku's
+    'Stream Starts' row) instead of the date row, leaving metric names as column headers
+    with pandas-appended numeric suffixes.
+    """
+    suffix_pattern = re.compile(r'^(.+)\.\d+$')
+    base_name_counts: Dict[str, int] = {}
+    for col in df.columns:
+        match = suffix_pattern.match(str(col))
+        if match:
+            base = match.group(1)
+            base_name_counts[base] = base_name_counts.get(base, 0) + 1
+    return bool(base_name_counts) and max(base_name_counts.values()) >= min_repeats
+
+
+def detect_and_transform(df: pd.DataFrame, file_buffer=None, file_type: str = 'csv') -> Tuple[pd.DataFrame, bool, int]:
     """
     Detect if dataframe is wide format and transform if needed.
 
     Args:
         df: Input dataframe
         file_buffer: Optional file buffer to re-read with proper headers
+        file_type: 'csv' or 'xlsx', used when re-reading via file_buffer
 
     Returns:
         Tuple of (transformed_df, was_transformed, filtered_count)
     """
     global _last_filtered_count
     _last_filtered_count = 0  # Reset for this transformation
+
+    # Detect Roku-style wrong-header: metric names like "Stream Starts", "Stream Starts.1",
+    # ..., "Stream Starts.88" were used as column headers instead of the date row.
+    # Re-read from the buffer with header=0 to recover the actual date column names.
+    if _has_repeated_metric_columns(df) and file_buffer is not None:
+        print(f"🔍 Detected repeated metric columns — re-reading with header=0 to recover date headers...")
+        try:
+            file_buffer.seek(0)
+            if file_type == 'csv':
+                df = pd.read_csv(file_buffer, header=0)
+            else:
+                df = pd.read_excel(file_buffer, header=0)
+            df.columns = df.columns.str.strip()
+            print(f"📋 Re-read columns (first 10): {list(df.columns[:10])}")
+        except Exception as e:
+            print(f"⚠️ Failed to re-read file with header=0: {e}")
 
     # First, check if this looks like a 2-row header that was incorrectly read
     # Signs: Many "Unnamed: X" columns, and first row contains field names
