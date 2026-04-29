@@ -949,6 +949,8 @@ st.markdown("""
         background-color: #f0f2f6;
         padding: 0.25rem;
         border-radius: 0.5rem;
+        flex-wrap: nowrap !important;
+        overflow-x: auto;
     }
 
     .tab-navigation div[role="radiogroup"] label {
@@ -957,6 +959,8 @@ st.markdown("""
         border-radius: 0.375rem;
         cursor: pointer;
         transition: background-color 0.2s;
+        white-space: nowrap;
+        flex-shrink: 0;
     }
 
     .tab-navigation div[role="radiogroup"] label:hover {
@@ -2302,6 +2306,7 @@ def load_data_tab(sf_conn):
         year = st.selectbox(
             "Year *",
             options=[2025, 2026],
+            index=1,  # Default to 2026
             help="Required. Select the year for this data"
         )
 
@@ -2309,7 +2314,7 @@ def load_data_tab(sf_conn):
         quarter = st.selectbox(
             "Quarter *",
             options=["Q1", "Q2", "Q3", "Q4"],
-            index=3,  # Default to Q4
+            index=0,  # Default to Q1
             help="Required. Select the quarter for this data"
         )
 
