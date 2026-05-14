@@ -1188,13 +1188,14 @@ def main():
     }
     env_badge = env_colors.get(env_name, '⚪')
 
-    col1, col2 = st.columns([5, 1])
-    with col1:
-        st.title("📊 Data Template Manager")
-        st.markdown("Manage data templates and column mappings for viewership data uploads")
-    with col2:
-        st.markdown(f"### {env_badge} {env_name.upper()}")
-        st.caption("Environment")
+    st.markdown(
+        f"""<div style="display:flex; align-items:baseline; gap:16px; flex-wrap:nowrap; white-space:nowrap;">
+        <h1 style="margin:0; font-size:2rem;">📊 Data Template Manager</h1>
+        <span style="color:#888; font-size:0.95rem; white-space:nowrap;">Manage data templates and column mappings for viewership data uploads</span>
+        <span style="margin-left:auto; font-size:1rem; white-space:nowrap;">{env_badge} {env_name.upper()}</span>
+        </div>""",
+        unsafe_allow_html=True
+    )
 
     # Get cached Snowflake connection (only authenticates once per session)
     sf_conn = get_snowflake_connection()

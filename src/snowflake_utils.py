@@ -390,12 +390,32 @@ class SnowflakeConnection:
             """
             params = (platform, partner)
 
+        default_sql = """
+            SELECT
+                config_id, platform, partner, channel, territory, column_mappings,
+                validation_rules, filename_pattern, source_columns, target_table,
+                created_date, updated_date, created_by, custom_sanitization_procedure,
+                custom_territory_procedure, custom_channel_procedure, custom_date_procedure,
+                custom_normalizers, domain, sample_data, data_type, territories
+            FROM dictionary.public.viewership_file_formats
+            WHERE LOWER(platform) = LOWER(%s) AND LOWER(partner) = 'default'
+            ORDER BY updated_date DESC NULLS LAST, created_date DESC
+            """
+
         try:
             self.cursor.execute(select_sql, params)
             row = self.cursor.fetchone()
 
             if row:
                 return self._row_to_dict(row)
+
+            # Fall back to DEFAULT partner if no exact match found
+            if partner and partner.upper() != 'DEFAULT':
+                self.cursor.execute(default_sql, (platform,))
+                row = self.cursor.fetchone()
+                if row:
+                    return self._row_to_dict(row)
+
             return None
         except Exception as e:
             raise Exception(f"Error retrieving configuration: {str(e)}")
