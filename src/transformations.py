@@ -569,6 +569,16 @@ def apply_transformation(data: pd.Series, transformation_config: Dict) -> pd.Ser
     elif trans_type == 'trim_ends':
         return data.apply(lambda x: str(x).strip() if pd.notna(x) and x != '' else '')
 
+    elif trans_type == 'value_map':
+        mapping = params.get('mapping', {})
+        default = params.get('default', '')
+        return data.apply(lambda x: mapping.get(str(x).strip(), default) if pd.notna(x) and str(x).strip() != '' else default)
+
+    elif trans_type == 'regex_replace':
+        pattern = params.get('pattern', '')
+        replacement = params.get('replacement', '')
+        return data.apply(lambda x: re.sub(pattern, replacement, str(x)).strip() if pd.notna(x) and x != '' else '')
+
     # Handle transformation classes
     elif trans_type == 'parse_time':
         transform = TimeFormatTransformation(**params)
@@ -652,6 +662,20 @@ def preview_transformation_step(value: Any, step_config: Dict) -> Any:
         if pd.isna(value) or value == '':
             return ''
         return str(value).strip()
+
+    elif trans_type == 'value_map':
+        mapping = params.get('mapping', {})
+        default = params.get('default', '')
+        if pd.isna(value) or str(value).strip() == '':
+            return default
+        return mapping.get(str(value).strip(), default)
+
+    elif trans_type == 'regex_replace':
+        pattern = params.get('pattern', '')
+        replacement = params.get('replacement', '')
+        if pd.isna(value) or value == '':
+            return ''
+        return re.sub(pattern, replacement, str(value)).strip()
 
     elif trans_type == 'split_extract':
         transform = SplitExtractTransformation(**params)
