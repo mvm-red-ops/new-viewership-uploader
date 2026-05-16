@@ -2248,99 +2248,377 @@ def display_configs(configs, sf_conn):
 
 def borrowed_viewership_ui(sf_conn):
     """UI for inserting borrowed viewership into platform_viewership and episode_details."""
+    import pandas as pd
+    import io
+
     st.subheader("Borrowed Viewership Insert")
-    st.write("Distribute a partner's topline HOV across episodes using a lender's episode-level breakdown.")
 
-    col_left, col_center, col_right = st.columns([1, 2, 1])
-    with col_center:
-        # Fetch deal options from deal_grid
-        try:
-            cur = sf_conn.cursor
-            cur.execute("""
-                SELECT DISTINCT deal_parent, partner, channel, channel_id, territory, territory_id
-                FROM dictionary.public.deal_grid
-                WHERE active = true
-                ORDER BY partner, channel, territory
-            """)
-            deal_rows = cur.fetchall()
-        except Exception as e:
-            st.error(f"Could not load deals: {e}")
-            return
+    try:
+        cur = sf_conn.cursor
+        cur.execute("""
+            SELECT DISTINCT deal_parent, partner, channel, channel_id, territory, territory_id
+            FROM dictionary.public.deal_grid
+            WHERE active = true
+            ORDER BY partner, channel, territory
+        """)
+        deal_rows = cur.fetchall()
+        cur.execute(
+            "SELECT DISTINCT platform FROM dictionary.public.viewership_file_formats ORDER BY platform"
+        )
+        platform_options = [""] + [r[0] for r in cur.fetchall()]
+    except Exception as e:
+        st.error(f"Could not load reference data: {e}")
+        return
 
-        deal_options = {
-            f"{r[1]} — {r[2]} — {r[4]}": {
-                "deal_parent": r[0], "partner": r[1], "channel": r[2],
-                "channel_id": r[3], "territory": r[4], "territory_id": r[5]
-            }
-            for r in deal_rows
+    from collections import defaultdict
+
+    # Build cascading lookup structures from deal_grid
+    partners = sorted({r[1] for r in deal_rows if r[1]})
+    partner_to_deal_parent = {}
+    partner_to_channels = defaultdict(list)
+    partner_to_territories = defaultdict(list)
+    deal_grid_lookup = {}  # (partner, channel, territory) -> {channel_id, territory_id, deal_parent}
+
+    for dp, partner, channel, channel_id, territory, territory_id in deal_rows:
+        if partner not in partner_to_deal_parent:
+            partner_to_deal_parent[partner] = dp
+        if channel not in partner_to_channels[partner]:
+            partner_to_channels[partner].append(channel)
+        if territory not in partner_to_territories[partner]:
+            partner_to_territories[partner].append(territory)
+        deal_grid_lookup[(partner, channel, territory)] = {
+            'deal_parent': dp, 'channel_id': channel_id, 'territory_id': territory_id
         }
-        deal_labels = [""] + list(deal_options.keys())
 
-        st.markdown("#### Lender (source of episode proportions)")
-        lender_label = st.selectbox("Lender deal *", options=deal_labels, key="bv_lender")
+    input_mode = st.radio(
+        "Input mode", ["📄 From File", "✏️ Manual"],
+        horizontal=True, key="bv_mode", label_visibility="collapsed"
+    )
 
-        st.markdown("#### Borrower (partner receiving the data)")
-        borrower_label = st.selectbox("Borrower deal *", options=deal_labels, key="bv_borrower")
+    # ── Manual entry ──────────────────────────────────────────────────────────
+    if input_mode == "✏️ Manual":
+        _, col_center, _ = st.columns([1, 2, 1])
+        with col_center:
+            st.markdown("#### Lender (source of episode proportions)")
+            lender_partner_m = st.selectbox("Lender partner *", options=[""] + partners, key="bv_lender_partner")
+            lender_channel_m, lender_territory_m = "", ""
+            if lender_partner_m:
+                mc1, mc2 = st.columns(2)
+                with mc1:
+                    lender_channel_m = st.selectbox("Lender channel *", options=[""] + sorted(partner_to_channels[lender_partner_m]), key="bv_lender_channel")
+                with mc2:
+                    lender_territory_m = st.selectbox("Lender territory *", options=[""] + sorted(partner_to_territories[lender_partner_m]), key="bv_lender_territory")
 
-        borrower_platform = st.text_input("Borrower platform *", help="e.g. Philo, FuboTV", key="bv_platform")
+            st.markdown("#### Borrower (partner receiving the data)")
+            borrower_partner_m = st.selectbox("Borrower partner *", options=[""] + partners, key="bv_borrower_partner")
+            borrower_channel_m, borrower_territory_m = "", ""
+            if borrower_partner_m:
+                mc3, mc4 = st.columns(2)
+                with mc3:
+                    borrower_channel_m = st.selectbox("Borrower channel *", options=[""] + sorted(partner_to_channels[borrower_partner_m]), key="bv_borrower_channel")
+                with mc4:
+                    borrower_territory_m = st.selectbox("Borrower territory *", options=[""] + sorted(partner_to_territories[borrower_partner_m]), key="bv_borrower_territory")
 
-        st.markdown("#### Period")
-        col_y, col_q, col_m = st.columns(3)
-        with col_y:
-            year = st.selectbox("Year *", options=[2025, 2026], index=1, key="bv_year")
-        with col_q:
-            quarter = st.selectbox("Quarter *", options=["q1", "q2", "q3", "q4"], key="bv_quarter")
-        with col_m:
-            month_map = {"January": 1, "February": 2, "March": 3, "April": 4,
-                         "May": 5, "June": 6, "July": 7, "August": 8,
-                         "September": 9, "October": 10, "November": 11, "December": 12}
-            month_name = st.selectbox("Month *", options=list(month_map.keys()), key="bv_month")
-            month = month_map[month_name]
+            borrower_platform = st.selectbox("Borrower platform *", options=platform_options, key="bv_platform")
+            borrower_partner_label = st.selectbox("Borrower partner label *", options=[""] + partners, key="bv_partner",
+                                                   help="Written to the partner column in platform_viewership")
 
-        st.markdown("#### Topline")
-        topline_hov = st.number_input("Topline HOV (hours) *", min_value=0.0, step=0.01, key="bv_hov")
+            st.markdown("#### Period")
+            col_y, col_q, col_m = st.columns(3)
+            with col_y:
+                year = st.selectbox("Year *", options=[2025, 2026], index=1, key="bv_year")
+            with col_q:
+                quarter = st.selectbox("Quarter *", options=["q1", "q2", "q3", "q4"], key="bv_quarter")
+            with col_m:
+                month_map = {"January": 1, "February": 2, "March": 3, "April": 4,
+                             "May": 5, "June": 6, "July": 7, "August": 8,
+                             "September": 9, "October": 10, "November": 11, "December": 12}
+                month_name = st.selectbox("Month *", options=list(month_map.keys()), key="bv_month")
+                month = month_map[month_name]
 
-        filename = st.text_input(
-            "Filename",
-            value=f"borrowed_{borrower_platform or 'partner'}_{quarter}{year}_{month_name[:3].lower()}.csv" if borrower_platform else "",
-            key="bv_filename"
+            topline_hov = st.number_input("Topline HOV (hours) *", min_value=0.0, step=0.01, key="bv_hov")
+            filename = st.text_input("Filename", key="bv_filename")
+
+            st.divider()
+            if st.button("Insert Borrowed Viewership", type="primary", key="bv_submit"):
+                lender_info = deal_grid_lookup.get((lender_partner_m, lender_channel_m, lender_territory_m))
+                borrower_info = deal_grid_lookup.get((borrower_partner_m, borrower_channel_m, borrower_territory_m))
+                if not all([lender_partner_m, lender_channel_m, lender_territory_m,
+                             borrower_partner_m, borrower_channel_m, borrower_territory_m,
+                             borrower_platform, borrower_partner_label, topline_hov, filename]):
+                    st.warning("Please fill in all required fields.")
+                elif not lender_info:
+                    st.error(f"No deal found for lender: {lender_partner_m} / {lender_channel_m} / {lender_territory_m}")
+                elif not borrower_info:
+                    st.error(f"No deal found for borrower: {borrower_partner_m} / {borrower_channel_m} / {borrower_territory_m}")
+                else:
+                    from src.config import get_config
+                    cfg = get_config()
+                    db = "UPLOAD_DB_PROD" if cfg.ENVIRONMENT == "production" else "UPLOAD_DB"
+                    try:
+                        cur.execute(f"""
+                            CALL {db}.public.borrowed_viewership_data_insert(
+                                {lender_info['deal_parent']},
+                                {year}, {month}, '{quarter}',
+                                {lender_info['channel_id']}, {lender_info['territory_id']},
+                                {borrower_info['deal_parent']},
+                                '{borrower_partner_label}',
+                                '{borrower_platform}',
+                                '{borrower_channel_m}',
+                                '{borrower_territory_m}',
+                                {topline_hov},
+                                '{filename}'
+                            )
+                        """)
+                        result = cur.fetchone()[0]
+                        if result == "data inserted":
+                            st.success("✓ Borrowed viewership inserted into platform_viewership and episode_details.")
+                        else:
+                            st.error(f"Proc returned: {result}")
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+        return
+
+    # ── From File mode ────────────────────────────────────────────────────────
+    df_summary = None
+    df_display = None
+    sel_channels = []
+    sel_territories = []
+    uploaded_file_name = ""
+
+    col_left, col_right = st.columns([3, 2])
+
+    with col_left:
+        st.markdown("#### Source File")
+        uploaded_files = st.file_uploader(
+            "Upload topline viewership file(s) — daily or monthly, one or more months",
+            type=["csv"], key="bv_file", label_visibility="collapsed",
+            accept_multiple_files=True
+        )
+
+        if uploaded_files:
+            uploaded_file_name = uploaded_files[0].name if len(uploaded_files) == 1 else ""
+            df_raw = pd.concat(
+                [pd.read_csv(io.BytesIO(f.read())) for f in uploaded_files],
+                ignore_index=True
+            )
+            col_map = {c.lower().strip(): c for c in df_raw.columns}
+
+            date_col = next((col_map[k] for k in ['date', 'month', 'period', 'report date'] if k in col_map), None)
+            channel_col = next((col_map[k] for k in ['channel name', 'channel_name', 'channel'] if k in col_map), None)
+            territory_col = next((col_map[k] for k in ['territory', 'country', 'region'] if k in col_map), None)
+            minutes_col = next((col_map[k] for k in ['minutes streamed', 'minutes', 'total minutes', 'mins'] if k in col_map), None)
+            hours_col = next((col_map[k] for k in ['hours', 'hov', 'hours viewed', 'total hours'] if k in col_map), None)
+
+            missing = [n for n, c in [('date/period', date_col), ('channel', channel_col), ('territory', territory_col)] if not c]
+            if not minutes_col and not hours_col:
+                missing.append('minutes or hours column')
+
+            if missing:
+                st.warning(f"Could not detect required columns: {', '.join(missing)}. Found: {list(df_raw.columns)}")
+            else:
+                df_raw[date_col] = pd.to_datetime(df_raw[date_col], errors='coerce')
+                df_raw['_year'] = df_raw[date_col].dt.year.astype(int)
+                df_raw['_month'] = df_raw[date_col].dt.month.astype(int)
+                df_raw['_quarter'] = df_raw[date_col].dt.quarter.map({1: 'q1', 2: 'q2', 3: 'q3', 4: 'q4'})
+
+                if minutes_col:
+                    df_raw['_hov'] = pd.to_numeric(df_raw[minutes_col], errors='coerce') / 60.0
+                    unit_note = f"`{minutes_col}` ÷ 60 → HOV"
+                else:
+                    df_raw['_hov'] = pd.to_numeric(df_raw[hours_col], errors='coerce')
+                    unit_note = f"`{hours_col}` → HOV"
+
+                daily_check = df_raw.groupby([channel_col, territory_col, '_year', '_month'])[date_col].nunique()
+                is_daily = bool((daily_check > 1).any())
+                fmt_label = "Daily — rolled up to monthly" if is_daily else "Monthly"
+                st.caption(f"Format: **{fmt_label}** · {unit_note}")
+
+                df_summary = (
+                    df_raw
+                    .groupby([channel_col, territory_col, '_year', '_month', '_quarter'], as_index=False)['_hov']
+                    .sum()
+                    .rename(columns={
+                        channel_col: 'Channel', territory_col: 'Territory',
+                        '_year': 'Year', '_month': 'Month', '_quarter': 'Quarter',
+                        '_hov': 'HOV'
+                    })
+                )
+                df_summary['HOV'] = df_summary['HOV'].round(4)
+
+                all_channels = sorted(df_summary['Channel'].unique().tolist())
+                all_territories = sorted(df_summary['Territory'].unique().tolist())
+
+                fc1, fc2 = st.columns(2)
+                with fc1:
+                    sel_channels = st.multiselect("Channels", options=all_channels, default=all_channels, key="bv_ch_filter")
+                with fc2:
+                    sel_territories = st.multiselect("Territories", options=all_territories, default=all_territories, key="bv_ter_filter")
+
+                mask = df_summary['Channel'].isin(sel_channels) & df_summary['Territory'].isin(sel_territories)
+                df_display = (
+                    df_summary[mask][['Year', 'Month', 'Quarter', 'Channel', 'Territory', 'HOV']]
+                    .sort_values(['Year', 'Month', 'Channel', 'Territory'])
+                    .reset_index(drop=True)
+                )
+                st.dataframe(df_display, use_container_width=True, hide_index=True)
+
+    with col_right:
+        st.markdown("#### Configuration")
+        borrower_platform = st.selectbox("Borrower platform", options=platform_options, key="bv_platform")
+        borrower_partner = st.selectbox(
+            "Borrower partner",
+            options=[""] + partners,
+            key="bv_partner",
+            help="Written to the partner column in platform_viewership"
+        )
+        filename = st.text_input("Filename", value=uploaded_file_name, key="bv_filename")
+
+        st.markdown("#### Lender options")
+        use_lender_channel   = st.toggle("Filter lender by channel",   value=True,  key="bv_use_ch")
+        use_lender_territory = st.toggle("Filter lender by territory",  value=True,  key="bv_use_ter")
+
+    # ── Deal mapping (full width) ─────────────────────────────────────────────
+    def _resolve_lender(lp, lc, lt):
+        if not lp:
+            return None, None, None
+        dp = partner_to_deal_parent.get(lp)
+        cid = None
+        if lc:
+            match = next((v for (p, c, t), v in deal_grid_lookup.items() if p == lp and c == lc), None)
+            cid = match['channel_id'] if match else None
+        tid = None
+        if lt:
+            match = next((v for (p, c, t), v in deal_grid_lookup.items() if p == lp and t == lt), None)
+            tid = match['territory_id'] if match else None
+        return dp, cid, tid
+
+    def _resolve_borrower(bp, file_ch, file_ter):
+        entry = deal_grid_lookup.get((bp, file_ch, file_ter))
+        if entry:
+            return entry['deal_parent'], entry['channel_id'], entry['territory_id']
+        match = next((v for (p, c, t), v in deal_grid_lookup.items() if p == bp and c == file_ch), None)
+        if match:
+            return match['deal_parent'], match['channel_id'], match['territory_id']
+        return None, None, None
+
+    if df_summary is not None and sel_channels and sel_territories and df_display is not None and len(df_display) > 0:
+        combos = df_display[['Channel', 'Territory']].drop_duplicates().values.tolist()
+
+        all_lender_channels    = sorted({c for chs in partner_to_channels.values() for c in chs if c is not None})
+        all_lender_territories = sorted({t for ts in partner_to_territories.values() for t in ts if t is not None})
+
+        st.divider()
+        st.markdown("#### Deal Mapping")
+        st.caption("Click a cell to pick from the dropdown. Select a range of cells and press Ctrl+D (or ⌘+D) to fill down.")
+
+        # Seed the editor from session state so edits survive rerenders
+        editor_key = f"bv_mapping_{uploaded_file_name}_{use_lender_channel}_{use_lender_territory}"
+        init_key = f"{editor_key}_init"
+        if init_key not in st.session_state:
+            rows = []
+            for ch, ter in combos:
+                row = {'File Channel': ch, 'File Territory': ter,
+                       'Lender Partner': None, 'Borrower Partner': None}
+                if use_lender_channel:   row['Lender Channel']   = None
+                if use_lender_territory: row['Lender Territory'] = None
+                rows.append(row)
+            st.session_state[init_key] = pd.DataFrame(rows)
+
+        col_config = {
+            'File Channel':    st.column_config.TextColumn('File Channel',    disabled=True),
+            'File Territory':  st.column_config.TextColumn('File Territory',  disabled=True),
+            'Lender Partner':  st.column_config.SelectboxColumn('Lender Partner',  options=partners),
+            'Borrower Partner': st.column_config.SelectboxColumn('Borrower Partner', options=partners),
+        }
+        if use_lender_channel:
+            col_config['Lender Channel'] = st.column_config.SelectboxColumn(
+                'Lender Channel', options=all_lender_channels
+            )
+        if use_lender_territory:
+            col_config['Lender Territory'] = st.column_config.SelectboxColumn(
+                'Lender Territory', options=all_lender_territories
+            )
+
+        edited_df = st.data_editor(
+            st.session_state[init_key],
+            column_config=col_config,
+            use_container_width=True,
+            hide_index=True,
+            key=editor_key,
         )
 
         st.divider()
-        if st.button("Insert Borrowed Viewership", type="primary", key="bv_submit"):
-            if not lender_label or not borrower_label or not borrower_platform or not topline_hov:
-                st.warning("Please fill in all required fields.")
-                return
 
-            lender = deal_options[lender_label]
-            borrower = deal_options[borrower_label]
+        all_mapped = edited_df['Lender Partner'].notna().all() and edited_df['Borrower Partner'].notna().all()
+        ready = all_mapped and bool(borrower_platform) and bool(borrower_partner) and bool(filename)
 
+        if st.button("Insert All", type="primary", key="bv_submit", disabled=not ready):
             from src.config import get_config
             cfg = get_config()
             db = "UPLOAD_DB_PROD" if cfg.ENVIRONMENT == "production" else "UPLOAD_DB"
 
-            try:
-                cur.execute(f"""
-                    CALL {db}.public.borrowed_viewership_data_insert(
-                        {lender['deal_parent']},
-                        {year}, {month}, '{quarter}',
-                        {lender['channel_id']}, {lender['territory_id']},
-                        {borrower['deal_parent']},
-                        '{borrower['partner']}',
-                        '{borrower_platform}',
-                        '{borrower['channel']}',
-                        '{borrower['territory']}',
-                        {topline_hov},
-                        '{filename}'
-                    )
-                """)
-                result = cur.fetchone()[0]
-                if result == "data inserted":
-                    st.success(f"✓ Borrowed viewership inserted into platform_viewership and episode_details.")
-                else:
-                    st.error(f"Proc returned: {result}")
-            except Exception as e:
-                st.error(f"Error: {e}")
+            errors = []
+            successes = 0
+            total = len(df_display)
+            progress = st.progress(0, text="Inserting…")
+
+            # Build mapping from the edited grid keyed by (channel, territory)
+            grid_map = {
+                (r['File Channel'], r['File Territory']): r
+                for _, r in edited_df.iterrows()
+            }
+
+            for i, row in df_display.iterrows():
+                grid_row = grid_map.get((row['Channel'], row['Territory']), {})
+                lp = grid_row.get('Lender Partner') or ''
+                lc = grid_row.get('Lender Channel')   if use_lender_channel   else None
+                lt = grid_row.get('Lender Territory') if use_lender_territory else None
+                bp = grid_row.get('Borrower Partner') or ''
+
+                lender_dp, lender_cid, lender_tid   = _resolve_lender(lp, lc, lt)
+                borrower_dp, borrower_cid, borrower_tid = _resolve_borrower(bp, row['Channel'], row['Territory'])
+
+                if lender_dp is None or borrower_dp is None:
+                    errors.append(f"{row['Channel']} / {row['Territory']} {int(row['Year'])}-{int(row['Month'])}: could not resolve deal")
+                    progress.progress((i + 1) / total)
+                    continue
+
+                cid_sql = str(lender_cid) if lender_cid is not None else 'NULL'
+                tid_sql = str(lender_tid) if lender_tid is not None else 'NULL'
+
+                try:
+                    cur.execute(f"""
+                        CALL {db}.public.borrowed_viewership_data_insert(
+                            {lender_dp},
+                            {int(row['Year'])}, {int(row['Month'])}, '{row['Quarter']}',
+                            {cid_sql}, {tid_sql},
+                            {borrower_dp},
+                            '{borrower_partner}',
+                            '{borrower_platform}',
+                            '{row['Channel']}',
+                            '{row['Territory']}',
+                            {row['HOV']},
+                            '{filename}'
+                        )
+                    """)
+                    result = cur.fetchone()[0]
+                    if result == "data inserted":
+                        successes += 1
+                    else:
+                        errors.append(f"{row['Channel']} / {row['Territory']} {int(row['Year'])}-{int(row['Month'])}: {result}")
+                except Exception as e:
+                    errors.append(f"{row['Channel']} / {row['Territory']} {int(row['Year'])}-{int(row['Month'])}: {e}")
+
+                progress.progress((i + 1) / total, text=f"Inserting {i + 1}/{total}…")
+
+            progress.empty()
+            if successes:
+                st.success(f"✓ Inserted {successes}/{total} entries into platform_viewership and episode_details.")
+            for err in errors:
+                st.error(err)
+    elif df_summary is None:
+        st.info("Upload a file above to configure deal mappings.")
 
 
 def load_data_tab(sf_conn):

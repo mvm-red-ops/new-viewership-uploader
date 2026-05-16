@@ -1,5 +1,8 @@
 # Project Memory
 
+## Workflow Rules
+- See memory/feedback_push_workflow.md — never push without user testing + approval; staging first, then main.
+
 ## Architecture Overview
 See memory/architecture.md for full details.
 
