@@ -2548,7 +2548,7 @@ def borrowed_viewership_ui(sf_conn):
         if init_key not in st.session_state:
             rows = []
             for ch, ter in combos:
-                row = {'File Channel': ch, 'File Territory': ter,
+                row = {'Skip': False, 'File Channel': ch, 'File Territory': ter,
                        'Lender Partner': None, 'Borrower Partner': None,
                        'Borrower Channel': _match_channel(ch)}
                 if use_lender_channel:   row['Lender Channel']   = _match_channel(ch)
@@ -2557,6 +2557,7 @@ def borrowed_viewership_ui(sf_conn):
             st.session_state[init_key] = pd.DataFrame(rows)
 
         col_config = {
+            'Skip':            st.column_config.CheckboxColumn('✕', help="Exclude this row from Insert All", default=False),
             'File Channel':    st.column_config.TextColumn('File Channel',    disabled=True),
             'File Territory':  st.column_config.TextColumn('File Territory',  disabled=True),
             'Lender Partner':  st.column_config.SelectboxColumn('Lender Partner',  options=partners),
@@ -2580,10 +2581,41 @@ def borrowed_viewership_ui(sf_conn):
             key=editor_key,
         )
 
+        skipped_rows = edited_df[edited_df['Skip'] == True]
+        if len(skipped_rows) and filename:
+            from config import get_config as _get_cfg
+            _cfg = _get_cfg()
+            _pv_db = "NOSEY_PROD" if _cfg.ENVIRONMENT == "production" else "TEST_STAGING"
+            if st.button(f"🗑️ Delete skipped rows from DB ({len(skipped_rows)} group(s))", key="bv_del_skipped"):
+                st.session_state["bv_del_skipped_confirm"] = True
+            if st.session_state.get("bv_del_skipped_confirm"):
+                st.warning(f"Will delete all rows for the {len(skipped_rows)} skipped channel/territory group(s) under filename **{filename}**. Cannot be undone.")
+                dsc1, dsc2 = st.columns(2)
+                with dsc1:
+                    if st.button("✓ Confirm", type="primary", key="bv_del_skipped_ok"):
+                        _cur = sf_conn.cursor
+                        del_pv = del_ed = 0
+                        for _, sr in skipped_rows.iterrows():
+                            _ch  = sr['File Channel'].replace("'", "''")
+                            _ter = sr['File Territory'].replace("'", "''")
+                            _fn  = filename.replace("'", "''")
+                            _where = f"filename = '{_fn}' AND channel = '{_ch}' AND territory = '{_ter}'"
+                            _cur.execute(f"DELETE FROM {_pv_db}.public.platform_viewership WHERE {_where}")
+                            del_pv += _cur.rowcount
+                            _cur.execute(f"DELETE FROM assets.public.episode_details WHERE {_where}")
+                            del_ed += _cur.rowcount
+                        st.success(f"Deleted {del_pv:,} rows from platform_viewership and {del_ed:,} rows from episode_details.")
+                        st.session_state.pop("bv_del_skipped_confirm", None)
+                with dsc2:
+                    if st.button("Cancel", key="bv_del_skipped_cancel"):
+                        st.session_state.pop("bv_del_skipped_confirm", None)
+                        st.rerun()
+
         st.divider()
 
-        all_mapped = edited_df['Lender Partner'].notna().all() and edited_df['Borrower Partner'].notna().all()
-        ready = all_mapped and bool(borrower_platform) and bool(filename)
+        active_df = edited_df[edited_df['Skip'] != True]
+        all_mapped = active_df['Lender Partner'].notna().all() and active_df['Borrower Partner'].notna().all()
+        ready = all_mapped and bool(borrower_platform) and bool(filename) and len(active_df) > 0
 
         if st.button("Insert All", type="primary", key="bv_submit", disabled=not ready):
             from config import get_config
@@ -2592,16 +2624,19 @@ def borrowed_viewership_ui(sf_conn):
 
             errors = []
             successes = 0
-            total = len(df_display)
+            # Only insert rows not marked as skipped
+            active_channels = set(zip(active_df['File Channel'], active_df['File Territory']))
+            df_insert = df_display[df_display.apply(lambda r: (r['Channel'], r['Territory']) in active_channels, axis=1)]
+            total = len(df_insert)
             progress = st.progress(0, text="Inserting…")
 
             # Build mapping from the edited grid keyed by (channel, territory)
             grid_map = {
                 (r['File Channel'], r['File Territory']): r
-                for _, r in edited_df.iterrows()
+                for _, r in active_df.iterrows()
             }
 
-            for i, row in df_display.iterrows():
+            for step, (i, row) in enumerate(df_insert.iterrows()):
                 grid_row = grid_map.get((row['Channel'], row['Territory']), {})
                 lp = grid_row.get('Lender Partner') or ''
                 lc = grid_row.get('Lender Channel')   if use_lender_channel   else None
@@ -2614,7 +2649,7 @@ def borrowed_viewership_ui(sf_conn):
 
                 if lender_dp is None or borrower_dp is None:
                     errors.append(f"{row['Channel']} / {row['Territory']} {int(row['Year'])}-{int(row['Month'])}: could not resolve deal")
-                    progress.progress((i + 1) / total)
+                    progress.progress((step + 1) / total)
                     continue
 
                 cid_sql  = str(lender_cid)    if lender_cid    is not None else 'NULL'
@@ -2646,7 +2681,7 @@ def borrowed_viewership_ui(sf_conn):
                 except Exception as e:
                     errors.append(f"{row['Channel']} / {row['Territory']} {int(row['Year'])}-{int(row['Month'])}: {e}")
 
-                progress.progress((i + 1) / total, text=f"Inserting {i + 1}/{total}…")
+                progress.progress((step + 1) / total, text=f"Inserting {step + 1}/{total}…")
 
             progress.empty()
             if successes:
@@ -2655,102 +2690,6 @@ def borrowed_viewership_ui(sf_conn):
                 st.error(err)
     elif df_summary is None:
         st.info("Upload a file above to configure deal mappings.")
-
-    # ── Delete records by filename + selection ────────────────────────────────
-    st.divider()
-    with st.expander("🗑️ Remove uploaded records"):
-        del_filename = st.text_input(
-            "Filename", value=uploaded_file_name, key="bv_del_filename",
-            placeholder="e.g. Freevee Linear Q1 26"
-        )
-        if del_filename:
-            from config import get_config
-            cfg = get_config()
-            pv_db = "NOSEY_PROD" if cfg.ENVIRONMENT == "production" else "TEST_STAGING"
-
-            cur = sf_conn.cursor
-            try:
-                cur.execute(f"""
-                    SELECT p.channel, p.territory, p.year, p.month,
-                           COUNT(*) as pv_rows,
-                           COALESCE(e.ed_rows, 0) as ed_rows
-                    FROM {pv_db}.public.platform_viewership p
-                    LEFT JOIN (
-                        SELECT channel, territory, year, month, COUNT(*) as ed_rows
-                        FROM assets.public.episode_details
-                        WHERE filename = '{del_filename}'
-                        GROUP BY channel, territory, year, month
-                    ) e ON p.channel = e.channel AND p.territory = e.territory
-                         AND p.year = e.year AND p.month = e.month
-                    WHERE p.filename = '{del_filename}'
-                    GROUP BY p.channel, p.territory, p.year, p.month, e.ed_rows
-                    ORDER BY p.year, p.month, p.channel, p.territory
-                """)
-                groups = cur.fetchall()
-            except Exception as e:
-                st.error(f"Error querying records: {e}")
-                groups = []
-
-            if not groups:
-                st.info("No records found for that filename.")
-            else:
-                sel_key = f"bv_del_sel_{del_filename}"
-                if sel_key not in st.session_state:
-                    st.session_state[sel_key] = pd.DataFrame(
-                        [{'Delete': False, 'Channel': r[0], 'Territory': r[1],
-                          'Year': r[2], 'Month': int(r[3]),
-                          'PV Rows': r[4], 'ED Rows': r[5]} for r in groups]
-                    )
-
-                edited_sel = st.data_editor(
-                    st.session_state[sel_key],
-                    column_config={
-                        'Delete': st.column_config.CheckboxColumn('Delete', default=False),
-                        'Channel':    st.column_config.TextColumn(disabled=True),
-                        'Territory':  st.column_config.TextColumn(disabled=True),
-                        'Year':       st.column_config.NumberColumn(disabled=True),
-                        'Month':      st.column_config.NumberColumn(disabled=True),
-                        'PV Rows':    st.column_config.NumberColumn('PV Rows', disabled=True),
-                        'ED Rows':    st.column_config.NumberColumn('ED Rows', disabled=True),
-                    },
-                    use_container_width=True, hide_index=True, key="bv_del_grid"
-                )
-
-                to_delete = edited_sel[edited_sel['Delete']]
-                if len(to_delete):
-                    total_pv_sel = int(to_delete['PV Rows'].sum())
-                    total_ed_sel = int(to_delete['ED Rows'].sum())
-                    st.caption(f"{len(to_delete)} group(s) selected — {total_pv_sel:,} platform_viewership rows, {total_ed_sel:,} episode_details rows")
-
-                    confirm_key = f"bv_del_confirm_{del_filename}"
-                    if st.button("Delete selected", type="primary", key="bv_del_btn"):
-                        st.session_state[confirm_key] = True
-
-                    if st.session_state.get(confirm_key):
-                        st.warning("This cannot be undone.")
-                        dc1, dc2 = st.columns(2)
-                        with dc1:
-                            if st.button("✓ Confirm delete", type="primary", key="bv_del_confirm_btn"):
-                                try:
-                                    deleted_pv = deleted_ed = 0
-                                    for _, row in to_delete.iterrows():
-                                        where = (f"filename = '{del_filename}' AND channel = '{row['Channel']}'"
-                                                 f" AND territory = '{row['Territory']}'"
-                                                 f" AND year = {int(row['Year'])} AND month = '{int(row['Month'])}'")
-                                        cur.execute(f"DELETE FROM {pv_db}.public.platform_viewership WHERE {where}")
-                                        deleted_pv += cur.rowcount
-                                        cur.execute(f"DELETE FROM assets.public.episode_details WHERE {where}")
-                                        deleted_ed += cur.rowcount
-                                    st.success(f"Deleted {deleted_pv:,} rows from platform_viewership and {deleted_ed:,} rows from episode_details.")
-                                    st.session_state.pop(confirm_key, None)
-                                    st.session_state.pop(sel_key, None)
-                                    st.rerun()
-                                except Exception as e:
-                                    st.error(f"Delete failed: {e}")
-                        with dc2:
-                            if st.button("Cancel", key="bv_del_cancel_btn"):
-                                st.session_state.pop(confirm_key, None)
-                                st.rerun()
 
 
 def load_data_tab(sf_conn):
