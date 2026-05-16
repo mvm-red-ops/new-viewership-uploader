@@ -2466,12 +2466,6 @@ def borrowed_viewership_ui(sf_conn):
     with col_right:
         st.markdown("#### Configuration")
         borrower_platform = st.selectbox("Borrower platform", options=platform_options, key="bv_platform")
-        borrower_partner = st.selectbox(
-            "Borrower partner",
-            options=[""] + partners,
-            key="bv_partner",
-            help="Written to the partner column in platform_viewership"
-        )
         filename = st.text_input("Filename", value=uploaded_file_name, key="bv_filename")
 
         st.markdown("#### Lender options")
@@ -2551,7 +2545,7 @@ def borrowed_viewership_ui(sf_conn):
         st.divider()
 
         all_mapped = edited_df['Lender Partner'].notna().all() and edited_df['Borrower Partner'].notna().all()
-        ready = all_mapped and bool(borrower_platform) and bool(borrower_partner) and bool(filename)
+        ready = all_mapped and bool(borrower_platform) and bool(filename)
 
         if st.button("Insert All", type="primary", key="bv_submit", disabled=not ready):
             from src.config import get_config
@@ -2594,7 +2588,7 @@ def borrowed_viewership_ui(sf_conn):
                             {int(row['Year'])}, {int(row['Month'])}, '{row['Quarter']}',
                             {cid_sql}, {tid_sql},
                             {borrower_dp},
-                            '{borrower_partner}',
+                            '{bp}',
                             '{borrower_platform}',
                             '{row['Channel']}',
                             '{row['Territory']}',
