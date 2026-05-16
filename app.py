@@ -2656,8 +2656,8 @@ def borrowed_viewership_ui(sf_conn):
 
                 cid_sql  = str(lender_cid)    if lender_cid    is not None else 'NULL'
                 tid_sql  = str(lender_tid)    if lender_tid    is not None else 'NULL'
-                # BORROWER_TERRITORY_ID: only pass when territory filter is off but user wants file territory written
-                btid_sql = str(borrower_tid) if (not use_lender_territory and write_file_territory and borrower_tid is not None) else 'NULL'
+                # Always pass BORROWER_TERRITORY_ID when writing file territory so the proc uses it over TERRITORY_ID
+                btid_sql = str(borrower_tid) if (write_file_territory and borrower_tid is not None) else 'NULL'
 
                 try:
                     cur.execute(f"""
