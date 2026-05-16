@@ -2352,7 +2352,7 @@ def borrowed_viewership_ui(sf_conn):
                 elif not borrower_info:
                     st.error(f"No deal found for borrower: {borrower_partner_m} / {borrower_channel_m} / {borrower_territory_m}")
                 else:
-                    from src.config import get_config
+                    from config import get_config
                     cfg = get_config()
                     db = "UPLOAD_DB_PROD" if cfg.ENVIRONMENT == "production" else "UPLOAD_DB"
                     try:
@@ -2569,7 +2569,7 @@ def borrowed_viewership_ui(sf_conn):
         ready = all_mapped and bool(borrower_platform) and bool(filename)
 
         if st.button("Insert All", type="primary", key="bv_submit", disabled=not ready):
-            from src.config import get_config
+            from config import get_config
             cfg = get_config()
             db = "UPLOAD_DB_PROD" if cfg.ENVIRONMENT == "production" else "UPLOAD_DB"
 
