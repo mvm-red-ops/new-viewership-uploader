@@ -2656,11 +2656,11 @@ def borrowed_viewership_ui(sf_conn):
     elif df_summary is None:
         st.info("Upload a file above to configure deal mappings.")
 
-    # ── Delete records by filename ────────────────────────────────────────────
+    # ── Delete records by filename + selection ────────────────────────────────
     st.divider()
-    with st.expander("🗑️ Remove records by filename"):
+    with st.expander("🗑️ Remove uploaded records"):
         del_filename = st.text_input(
-            "Filename to delete", value=uploaded_file_name, key="bv_del_filename",
+            "Filename", value=uploaded_file_name, key="bv_del_filename",
             placeholder="e.g. Freevee Linear Q1 26"
         )
         if del_filename:
@@ -2671,57 +2671,86 @@ def borrowed_viewership_ui(sf_conn):
             cur = sf_conn.cursor
             try:
                 cur.execute(f"""
-                    SELECT channel, territory, year, month, COUNT(*) as row_count
-                    FROM {pv_db}.public.platform_viewership
-                    WHERE filename = '{del_filename}'
-                    GROUP BY channel, territory, year, month
-                    ORDER BY year, month, channel, territory
+                    SELECT p.channel, p.territory, p.year, p.month,
+                           COUNT(*) as pv_rows,
+                           COALESCE(e.ed_rows, 0) as ed_rows
+                    FROM {pv_db}.public.platform_viewership p
+                    LEFT JOIN (
+                        SELECT channel, territory, year, month, COUNT(*) as ed_rows
+                        FROM assets.public.episode_details
+                        WHERE filename = '{del_filename}'
+                        GROUP BY channel, territory, year, month
+                    ) e ON p.channel = e.channel AND p.territory = e.territory
+                         AND p.year = e.year AND p.month = e.month
+                    WHERE p.filename = '{del_filename}'
+                    GROUP BY p.channel, p.territory, p.year, p.month, e.ed_rows
+                    ORDER BY p.year, p.month, p.channel, p.territory
                 """)
-                pv_rows = cur.fetchall()
-                cur.execute(f"""
-                    SELECT channel, territory, year, month, COUNT(*) as row_count
-                    FROM assets.public.episode_details
-                    WHERE filename = '{del_filename}'
-                    GROUP BY channel, territory, year, month
-                    ORDER BY year, month, channel, territory
-                """)
-                ed_rows = cur.fetchall()
+                groups = cur.fetchall()
             except Exception as e:
                 st.error(f"Error querying records: {e}")
-                pv_rows, ed_rows = [], []
+                groups = []
 
-            total_pv = sum(r[4] for r in pv_rows)
-            total_ed = sum(r[4] for r in ed_rows)
-
-            if not pv_rows and not ed_rows:
+            if not groups:
                 st.info("No records found for that filename.")
             else:
-                st.write(f"**platform_viewership:** {total_pv:,} rows · **episode_details:** {total_ed:,} rows")
-                preview_df = pd.DataFrame(pv_rows, columns=['Channel', 'Territory', 'Year', 'Month', 'Rows'])
-                st.dataframe(preview_df, use_container_width=True, hide_index=True)
+                sel_key = f"bv_del_sel_{del_filename}"
+                if sel_key not in st.session_state:
+                    st.session_state[sel_key] = pd.DataFrame(
+                        [{'Delete': False, 'Channel': r[0], 'Territory': r[1],
+                          'Year': r[2], 'Month': int(r[3]),
+                          'PV Rows': r[4], 'ED Rows': r[5]} for r in groups]
+                    )
 
-                confirm_key = f"bv_del_confirm_{del_filename}"
-                if st.button("Delete these records", type="primary", key="bv_del_btn"):
-                    st.session_state[confirm_key] = True
+                edited_sel = st.data_editor(
+                    st.session_state[sel_key],
+                    column_config={
+                        'Delete': st.column_config.CheckboxColumn('Delete', default=False),
+                        'Channel':    st.column_config.TextColumn(disabled=True),
+                        'Territory':  st.column_config.TextColumn(disabled=True),
+                        'Year':       st.column_config.NumberColumn(disabled=True),
+                        'Month':      st.column_config.NumberColumn(disabled=True),
+                        'PV Rows':    st.column_config.NumberColumn('PV Rows', disabled=True),
+                        'ED Rows':    st.column_config.NumberColumn('ED Rows', disabled=True),
+                    },
+                    use_container_width=True, hide_index=True, key="bv_del_grid"
+                )
 
-                if st.session_state.get(confirm_key):
-                    st.warning(f"This will permanently delete {total_pv:,} rows from platform_viewership and {total_ed:,} rows from episode_details. Cannot be undone.")
-                    dc1, dc2 = st.columns(2)
-                    with dc1:
-                        if st.button("✓ Confirm delete", type="primary", key="bv_del_confirm_btn"):
-                            try:
-                                cur.execute(f"DELETE FROM {pv_db}.public.platform_viewership WHERE filename = '{del_filename}'")
-                                deleted_pv = cur.rowcount
-                                cur.execute(f"DELETE FROM assets.public.episode_details WHERE filename = '{del_filename}'")
-                                deleted_ed = cur.rowcount
-                                st.success(f"Deleted {deleted_pv:,} rows from platform_viewership and {deleted_ed:,} rows from episode_details.")
+                to_delete = edited_sel[edited_sel['Delete']]
+                if len(to_delete):
+                    total_pv_sel = int(to_delete['PV Rows'].sum())
+                    total_ed_sel = int(to_delete['ED Rows'].sum())
+                    st.caption(f"{len(to_delete)} group(s) selected — {total_pv_sel:,} platform_viewership rows, {total_ed_sel:,} episode_details rows")
+
+                    confirm_key = f"bv_del_confirm_{del_filename}"
+                    if st.button("Delete selected", type="primary", key="bv_del_btn"):
+                        st.session_state[confirm_key] = True
+
+                    if st.session_state.get(confirm_key):
+                        st.warning("This cannot be undone.")
+                        dc1, dc2 = st.columns(2)
+                        with dc1:
+                            if st.button("✓ Confirm delete", type="primary", key="bv_del_confirm_btn"):
+                                try:
+                                    deleted_pv = deleted_ed = 0
+                                    for _, row in to_delete.iterrows():
+                                        where = (f"filename = '{del_filename}' AND channel = '{row['Channel']}'"
+                                                 f" AND territory = '{row['Territory']}'"
+                                                 f" AND year = {int(row['Year'])} AND month = '{int(row['Month'])}'")
+                                        cur.execute(f"DELETE FROM {pv_db}.public.platform_viewership WHERE {where}")
+                                        deleted_pv += cur.rowcount
+                                        cur.execute(f"DELETE FROM assets.public.episode_details WHERE {where}")
+                                        deleted_ed += cur.rowcount
+                                    st.success(f"Deleted {deleted_pv:,} rows from platform_viewership and {deleted_ed:,} rows from episode_details.")
+                                    st.session_state.pop(confirm_key, None)
+                                    st.session_state.pop(sel_key, None)
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Delete failed: {e}")
+                        with dc2:
+                            if st.button("Cancel", key="bv_del_cancel_btn"):
                                 st.session_state.pop(confirm_key, None)
-                            except Exception as e:
-                                st.error(f"Delete failed: {e}")
-                    with dc2:
-                        if st.button("Cancel", key="bv_del_cancel_btn"):
-                            st.session_state.pop(confirm_key, None)
-                            st.rerun()
+                                st.rerun()
 
 
 def load_data_tab(sf_conn):
