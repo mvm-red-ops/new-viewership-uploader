@@ -2656,6 +2656,73 @@ def borrowed_viewership_ui(sf_conn):
     elif df_summary is None:
         st.info("Upload a file above to configure deal mappings.")
 
+    # ── Delete records by filename ────────────────────────────────────────────
+    st.divider()
+    with st.expander("🗑️ Remove records by filename"):
+        del_filename = st.text_input(
+            "Filename to delete", value=uploaded_file_name, key="bv_del_filename",
+            placeholder="e.g. Freevee Linear Q1 26"
+        )
+        if del_filename:
+            from config import get_config
+            cfg = get_config()
+            pv_db = "NOSEY_PROD" if cfg.ENVIRONMENT == "production" else "TEST_STAGING"
+
+            cur = sf_conn.cursor
+            try:
+                cur.execute(f"""
+                    SELECT channel, territory, year, month, COUNT(*) as row_count
+                    FROM {pv_db}.public.platform_viewership
+                    WHERE filename = '{del_filename}'
+                    GROUP BY channel, territory, year, month
+                    ORDER BY year, month, channel, territory
+                """)
+                pv_rows = cur.fetchall()
+                cur.execute(f"""
+                    SELECT channel, territory, year, month, COUNT(*) as row_count
+                    FROM assets.public.episode_details
+                    WHERE filename = '{del_filename}'
+                    GROUP BY channel, territory, year, month
+                    ORDER BY year, month, channel, territory
+                """)
+                ed_rows = cur.fetchall()
+            except Exception as e:
+                st.error(f"Error querying records: {e}")
+                pv_rows, ed_rows = [], []
+
+            total_pv = sum(r[4] for r in pv_rows)
+            total_ed = sum(r[4] for r in ed_rows)
+
+            if not pv_rows and not ed_rows:
+                st.info("No records found for that filename.")
+            else:
+                st.write(f"**platform_viewership:** {total_pv:,} rows · **episode_details:** {total_ed:,} rows")
+                preview_df = pd.DataFrame(pv_rows, columns=['Channel', 'Territory', 'Year', 'Month', 'Rows'])
+                st.dataframe(preview_df, use_container_width=True, hide_index=True)
+
+                confirm_key = f"bv_del_confirm_{del_filename}"
+                if st.button("Delete these records", type="primary", key="bv_del_btn"):
+                    st.session_state[confirm_key] = True
+
+                if st.session_state.get(confirm_key):
+                    st.warning(f"This will permanently delete {total_pv:,} rows from platform_viewership and {total_ed:,} rows from episode_details. Cannot be undone.")
+                    dc1, dc2 = st.columns(2)
+                    with dc1:
+                        if st.button("✓ Confirm delete", type="primary", key="bv_del_confirm_btn"):
+                            try:
+                                cur.execute(f"DELETE FROM {pv_db}.public.platform_viewership WHERE filename = '{del_filename}'")
+                                deleted_pv = cur.rowcount
+                                cur.execute(f"DELETE FROM assets.public.episode_details WHERE filename = '{del_filename}'")
+                                deleted_ed = cur.rowcount
+                                st.success(f"Deleted {deleted_pv:,} rows from platform_viewership and {deleted_ed:,} rows from episode_details.")
+                                st.session_state.pop(confirm_key, None)
+                            except Exception as e:
+                                st.error(f"Delete failed: {e}")
+                    with dc2:
+                        if st.button("Cancel", key="bv_del_cancel_btn"):
+                            st.session_state.pop(confirm_key, None)
+                            st.rerun()
+
 
 def load_data_tab(sf_conn):
     """Tab for loading data into platform_viewership table using existing templates"""
