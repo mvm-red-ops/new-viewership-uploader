@@ -2471,6 +2471,13 @@ def borrowed_viewership_ui(sf_conn):
         st.markdown("#### Lender options")
         use_lender_channel   = st.toggle("Filter lender by channel",   value=True,  key="bv_use_ch")
         use_lender_territory = st.toggle("Filter lender by territory",  value=True,  key="bv_use_ter")
+        write_file_territory = True
+        if not use_lender_territory:
+            write_file_territory = st.toggle(
+                "Write file territory into inserted rows",
+                value=True, key="bv_write_ter",
+                help="ON: rows are labeled with the file's territory (e.g. US). OFF: rows inherit the lender's territory."
+            )
 
     # ── Deal mapping (full width) ─────────────────────────────────────────────
     def _resolve_lender(lp, lc, lt):
@@ -2610,8 +2617,10 @@ def borrowed_viewership_ui(sf_conn):
                     progress.progress((i + 1) / total)
                     continue
 
-                cid_sql = str(lender_cid) if lender_cid is not None else 'NULL'
-                tid_sql = str(lender_tid) if lender_tid is not None else 'NULL'
+                cid_sql  = str(lender_cid)    if lender_cid    is not None else 'NULL'
+                tid_sql  = str(lender_tid)    if lender_tid    is not None else 'NULL'
+                # BORROWER_TERRITORY_ID: only pass when territory filter is off but user wants file territory written
+                btid_sql = str(borrower_tid) if (not use_lender_territory and write_file_territory and borrower_tid is not None) else 'NULL'
 
                 try:
                     cur.execute(f"""
@@ -2622,8 +2631,9 @@ def borrowed_viewership_ui(sf_conn):
                             {borrower_dp},
                             '{bp}',
                             '{borrower_platform}',
-                            '{row['Channel']}',
+                            '{bc}',
                             '{row['Territory']}',
+                            {btid_sql},
                             {row['HOV']},
                             '{filename}'
                         )
