@@ -2506,6 +2506,27 @@ def borrowed_viewership_ui(sf_conn):
         st.markdown("#### Deal Mapping")
         st.caption("Click a cell to pick from the dropdown. Select a range of cells and press Ctrl+D (or ⌘+D) to fill down.")
 
+        _ter_abbrev = {
+            'US': 'United States', 'UK': 'United Kingdom', 'CA': 'Canada',
+            'AU': 'Australia', 'DE': 'Germany', 'FR': 'France', 'MX': 'Mexico',
+            'IN': 'India', 'BR': 'Brazil', 'ES': 'Spain', 'IT': 'Italy',
+        }
+
+        def _match_channel(file_ch):
+            if file_ch in all_lender_channels:
+                return file_ch
+            lower = (file_ch or '').lower()
+            return next((c for c in all_lender_channels if c.lower() == lower), None)
+
+        def _match_territory(file_ter):
+            if file_ter in all_lender_territories:
+                return file_ter
+            expanded = _ter_abbrev.get((file_ter or '').upper())
+            if expanded and expanded in all_lender_territories:
+                return expanded
+            lower = (file_ter or '').lower()
+            return next((t for t in all_lender_territories if t.lower() == lower), None)
+
         # Seed the editor from session state so edits survive rerenders
         editor_key = f"bv_mapping_{uploaded_file_name}_{use_lender_channel}_{use_lender_territory}"
         init_key = f"{editor_key}_init"
@@ -2514,8 +2535,8 @@ def borrowed_viewership_ui(sf_conn):
             for ch, ter in combos:
                 row = {'File Channel': ch, 'File Territory': ter,
                        'Lender Partner': None, 'Borrower Partner': None}
-                if use_lender_channel:   row['Lender Channel']   = None
-                if use_lender_territory: row['Lender Territory'] = None
+                if use_lender_channel:   row['Lender Channel']   = _match_channel(ch)
+                if use_lender_territory: row['Lender Territory'] = _match_territory(ter)
                 rows.append(row)
             st.session_state[init_key] = pd.DataFrame(rows)
 
