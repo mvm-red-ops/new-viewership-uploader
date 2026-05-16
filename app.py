@@ -2246,10 +2246,119 @@ def display_configs(configs, sf_conn):
                     except Exception as e:
                         st.error(f"Error deleting configuration: {str(e)}")
 
+def borrowed_viewership_ui(sf_conn):
+    """UI for inserting borrowed viewership into platform_viewership and episode_details."""
+    st.subheader("Borrowed Viewership Insert")
+    st.write("Distribute a partner's topline HOV across episodes using a lender's episode-level breakdown.")
+
+    col_left, col_center, col_right = st.columns([1, 2, 1])
+    with col_center:
+        # Fetch deal options from deal_grid
+        try:
+            cur = sf_conn.cursor
+            cur.execute("""
+                SELECT DISTINCT deal_parent, partner, channel, channel_id, territory, territory_id
+                FROM dictionary.public.deal_grid
+                WHERE active = true
+                ORDER BY partner, channel, territory
+            """)
+            deal_rows = cur.fetchall()
+        except Exception as e:
+            st.error(f"Could not load deals: {e}")
+            return
+
+        deal_options = {
+            f"{r[1]} — {r[2]} — {r[4]}": {
+                "deal_parent": r[0], "partner": r[1], "channel": r[2],
+                "channel_id": r[3], "territory": r[4], "territory_id": r[5]
+            }
+            for r in deal_rows
+        }
+        deal_labels = [""] + list(deal_options.keys())
+
+        st.markdown("#### Lender (source of episode proportions)")
+        lender_label = st.selectbox("Lender deal *", options=deal_labels, key="bv_lender")
+
+        st.markdown("#### Borrower (partner receiving the data)")
+        borrower_label = st.selectbox("Borrower deal *", options=deal_labels, key="bv_borrower")
+
+        borrower_platform = st.text_input("Borrower platform *", help="e.g. Philo, FuboTV", key="bv_platform")
+
+        st.markdown("#### Period")
+        col_y, col_q, col_m = st.columns(3)
+        with col_y:
+            year = st.selectbox("Year *", options=[2025, 2026], index=1, key="bv_year")
+        with col_q:
+            quarter = st.selectbox("Quarter *", options=["q1", "q2", "q3", "q4"], key="bv_quarter")
+        with col_m:
+            month_map = {"January": 1, "February": 2, "March": 3, "April": 4,
+                         "May": 5, "June": 6, "July": 7, "August": 8,
+                         "September": 9, "October": 10, "November": 11, "December": 12}
+            month_name = st.selectbox("Month *", options=list(month_map.keys()), key="bv_month")
+            month = month_map[month_name]
+
+        st.markdown("#### Topline")
+        topline_hov = st.number_input("Topline HOV (hours) *", min_value=0.0, step=0.01, key="bv_hov")
+
+        filename = st.text_input(
+            "Filename",
+            value=f"borrowed_{borrower_platform or 'partner'}_{quarter}{year}_{month_name[:3].lower()}.csv" if borrower_platform else "",
+            key="bv_filename"
+        )
+
+        st.divider()
+        if st.button("Insert Borrowed Viewership", type="primary", key="bv_submit"):
+            if not lender_label or not borrower_label or not borrower_platform or not topline_hov:
+                st.warning("Please fill in all required fields.")
+                return
+
+            lender = deal_options[lender_label]
+            borrower = deal_options[borrower_label]
+
+            from src.config import get_config
+            cfg = get_config()
+            db = "UPLOAD_DB_PROD" if cfg.ENVIRONMENT == "production" else "UPLOAD_DB"
+
+            try:
+                cur.execute(f"""
+                    CALL {db}.public.borrowed_viewership_data_insert(
+                        {lender['deal_parent']},
+                        {year}, {month}, '{quarter}',
+                        {lender['channel_id']}, {lender['territory_id']},
+                        {borrower['deal_parent']},
+                        '{borrower['partner']}',
+                        '{borrower_platform}',
+                        '{borrower['channel']}',
+                        '{borrower['territory']}',
+                        {topline_hov},
+                        '{filename}'
+                    )
+                """)
+                result = cur.fetchone()[0]
+                if result == "data inserted":
+                    st.success(f"✓ Borrowed viewership inserted into platform_viewership and episode_details.")
+                else:
+                    st.error(f"Proc returned: {result}")
+            except Exception as e:
+                st.error(f"Error: {e}")
+
+
 def load_data_tab(sf_conn):
     """Tab for loading data into platform_viewership table using existing templates"""
 
     st.header("Load Data to Platform Viewership")
+
+    mode = st.radio(
+        "Mode",
+        ["📁 Upload File", "🔀 Borrowed Viewership"],
+        horizontal=True,
+        label_visibility="collapsed"
+    )
+
+    if mode == "🔀 Borrowed Viewership":
+        borrowed_viewership_ui(sf_conn)
+        return
+
     st.write("Select a configuration template and upload data to load into the platform_viewership table.")
 
     # Create centered, narrower container
