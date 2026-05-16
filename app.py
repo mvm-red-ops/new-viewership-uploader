@@ -2487,11 +2487,18 @@ def borrowed_viewership_ui(sf_conn):
             tid = match['territory_id'] if match else None
         return dp, cid, tid
 
-    def _resolve_borrower(bp, file_ch, file_ter):
-        entry = deal_grid_lookup.get((bp, file_ch, file_ter))
+    def _resolve_borrower(bp, ch, ter):
+        # Expand territory abbreviation before lookup
+        _ter_expand = {
+            'US': 'United States', 'UK': 'United Kingdom', 'CA': 'Canada',
+            'AU': 'Australia', 'DE': 'Germany', 'FR': 'France', 'MX': 'Mexico',
+            'IN': 'India', 'BR': 'Brazil', 'ES': 'Spain', 'IT': 'Italy',
+        }
+        ter = _ter_expand.get((ter or '').upper(), ter)
+        entry = deal_grid_lookup.get((bp, ch, ter))
         if entry:
             return entry['deal_parent'], entry['channel_id'], entry['territory_id']
-        match = next((v for (p, c, t), v in deal_grid_lookup.items() if p == bp and c == file_ch), None)
+        match = next((v for (p, c, t), v in deal_grid_lookup.items() if p == bp and c == ch), None)
         if match:
             return match['deal_parent'], match['channel_id'], match['territory_id']
         return None, None, None
@@ -2501,6 +2508,7 @@ def borrowed_viewership_ui(sf_conn):
 
         all_lender_channels    = sorted({c for chs in partner_to_channels.values() for c in chs if c is not None})
         all_lender_territories = sorted({t for ts in partner_to_territories.values() for t in ts if t is not None})
+        all_borrower_channels  = sorted({c for (p, c, t) in deal_grid_lookup if c is not None})
 
         st.divider()
         st.markdown("#### Deal Mapping")
@@ -2534,7 +2542,8 @@ def borrowed_viewership_ui(sf_conn):
             rows = []
             for ch, ter in combos:
                 row = {'File Channel': ch, 'File Territory': ter,
-                       'Lender Partner': None, 'Borrower Partner': None}
+                       'Lender Partner': None, 'Borrower Partner': None,
+                       'Borrower Channel': _match_channel(ch)}
                 if use_lender_channel:   row['Lender Channel']   = _match_channel(ch)
                 if use_lender_territory: row['Lender Territory'] = _match_territory(ter)
                 rows.append(row)
@@ -2545,6 +2554,7 @@ def borrowed_viewership_ui(sf_conn):
             'File Territory':  st.column_config.TextColumn('File Territory',  disabled=True),
             'Lender Partner':  st.column_config.SelectboxColumn('Lender Partner',  options=partners),
             'Borrower Partner': st.column_config.SelectboxColumn('Borrower Partner', options=partners),
+            'Borrower Channel': st.column_config.SelectboxColumn('Borrower Channel', options=all_borrower_channels),
         }
         if use_lender_channel:
             col_config['Lender Channel'] = st.column_config.SelectboxColumn(
@@ -2590,9 +2600,10 @@ def borrowed_viewership_ui(sf_conn):
                 lc = grid_row.get('Lender Channel')   if use_lender_channel   else None
                 lt = grid_row.get('Lender Territory') if use_lender_territory else None
                 bp = grid_row.get('Borrower Partner') or ''
+                bc = grid_row.get('Borrower Channel') or row['Channel']
 
                 lender_dp, lender_cid, lender_tid   = _resolve_lender(lp, lc, lt)
-                borrower_dp, borrower_cid, borrower_tid = _resolve_borrower(bp, row['Channel'], row['Territory'])
+                borrower_dp, borrower_cid, borrower_tid = _resolve_borrower(bp, bc, row['Territory'])
 
                 if lender_dp is None or borrower_dp is None:
                     errors.append(f"{row['Channel']} / {row['Territory']} {int(row['Year'])}-{int(row['Month'])}: could not resolve deal")
