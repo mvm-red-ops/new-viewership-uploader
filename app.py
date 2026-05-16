@@ -2480,27 +2480,34 @@ def borrowed_viewership_ui(sf_conn):
             )
 
     # ── Deal mapping (full width) ─────────────────────────────────────────────
+    _ter_expand = {
+        'US': 'United States', 'UK': 'United Kingdom', 'CA': 'Canada',
+        'AU': 'Australia', 'DE': 'Germany', 'FR': 'France', 'MX': 'Mexico',
+        'IN': 'India', 'BR': 'Brazil', 'ES': 'Spain', 'IT': 'Italy',
+    }
+
     def _resolve_lender(lp, lc, lt):
         if not lp:
             return None, None, None
-        dp = partner_to_deal_parent.get(lp)
+        lt_exp = _ter_expand.get((lt or '').upper(), lt) if lt else lt
+        # Use exact (partner, channel, territory) lookup when possible to get the right deal_parent
+        if lc and lt_exp:
+            entry = deal_grid_lookup.get((lp, lc, lt_exp))
+            if entry:
+                return entry['deal_parent'], entry['channel_id'], entry['territory_id']
+        # Fall back to channel-only or territory-only matches
         cid = None
         if lc:
             match = next((v for (p, c, t), v in deal_grid_lookup.items() if p == lp and c == lc), None)
             cid = match['channel_id'] if match else None
         tid = None
-        if lt:
-            match = next((v for (p, c, t), v in deal_grid_lookup.items() if p == lp and t == lt), None)
+        if lt_exp:
+            match = next((v for (p, c, t), v in deal_grid_lookup.items() if p == lp and t == lt_exp), None)
             tid = match['territory_id'] if match else None
+        dp = partner_to_deal_parent.get(lp)
         return dp, cid, tid
 
     def _resolve_borrower(bp, ch, ter):
-        # Expand territory abbreviation before lookup
-        _ter_expand = {
-            'US': 'United States', 'UK': 'United Kingdom', 'CA': 'Canada',
-            'AU': 'Australia', 'DE': 'Germany', 'FR': 'France', 'MX': 'Mexico',
-            'IN': 'India', 'BR': 'Brazil', 'ES': 'Spain', 'IT': 'Italy',
-        }
         ter = _ter_expand.get((ter or '').upper(), ter)
         entry = deal_grid_lookup.get((bp, ch, ter))
         if entry:
@@ -2521,12 +2528,6 @@ def borrowed_viewership_ui(sf_conn):
         st.markdown("#### Deal Mapping")
         st.caption("Click a cell to pick from the dropdown. Select a range of cells and press Ctrl+D (or ⌘+D) to fill down.")
 
-        _ter_abbrev = {
-            'US': 'United States', 'UK': 'United Kingdom', 'CA': 'Canada',
-            'AU': 'Australia', 'DE': 'Germany', 'FR': 'France', 'MX': 'Mexico',
-            'IN': 'India', 'BR': 'Brazil', 'ES': 'Spain', 'IT': 'Italy',
-        }
-
         def _match_channel(file_ch):
             if file_ch in all_lender_channels:
                 return file_ch
@@ -2536,7 +2537,7 @@ def borrowed_viewership_ui(sf_conn):
         def _match_territory(file_ter):
             if file_ter in all_lender_territories:
                 return file_ter
-            expanded = _ter_abbrev.get((file_ter or '').upper())
+            expanded = _ter_expand.get((file_ter or '').upper())
             if expanded and expanded in all_lender_territories:
                 return expanded
             lower = (file_ter or '').lower()
@@ -2644,8 +2645,9 @@ def borrowed_viewership_ui(sf_conn):
                 bp = grid_row.get('Borrower Partner') or ''
                 bc = grid_row.get('Borrower Channel') or row['Channel']
 
-                lender_dp, lender_cid, lender_tid   = _resolve_lender(lp, lc, lt)
-                borrower_dp, borrower_cid, borrower_tid = _resolve_borrower(bp, bc, row['Territory'])
+                borrower_ter = _ter_expand.get((row['Territory'] or '').upper(), row['Territory'])
+                lender_dp, lender_cid, lender_tid      = _resolve_lender(lp, lc, lt)
+                borrower_dp, borrower_cid, borrower_tid = _resolve_borrower(bp, bc, borrower_ter)
 
                 if lender_dp is None or borrower_dp is None:
                     errors.append(f"{row['Channel']} / {row['Territory']} {int(row['Year'])}-{int(row['Month'])}: could not resolve deal")
@@ -2667,7 +2669,7 @@ def borrowed_viewership_ui(sf_conn):
                             '{bp}',
                             '{borrower_platform}',
                             '{bc}',
-                            '{row['Territory']}',
+                            '{borrower_ter}',
                             {btid_sql},
                             {row['HOV']},
                             '{filename}'
