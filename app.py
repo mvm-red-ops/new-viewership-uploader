@@ -2654,9 +2654,9 @@ def borrowed_viewership_ui(sf_conn):
                     progress.progress((step + 1) / total)
                     continue
 
-                cid_sql  = str(lender_cid)    if lender_cid    is not None else 'NULL'
-                tid_sql  = str(lender_tid)    if lender_tid    is not None else 'NULL'
-                # Always pass BORROWER_TERRITORY_ID when writing file territory so the proc uses it over TERRITORY_ID
+                cid_sql  = str(lender_cid)   if lender_cid   is not None else 'NULL'
+                tid_sql  = str(lender_tid)   if lender_tid   is not None else 'NULL'
+                bcid_sql = str(borrower_cid) if borrower_cid is not None else 'NULL'
                 btid_sql = str(borrower_tid) if (write_file_territory and borrower_tid is not None) else 'NULL'
 
                 try:
@@ -2670,6 +2670,7 @@ def borrowed_viewership_ui(sf_conn):
                             '{borrower_platform}',
                             '{bc}',
                             '{borrower_ter}',
+                            {bcid_sql},
                             {btid_sql},
                             {row['HOV']},
                             '{filename}'
