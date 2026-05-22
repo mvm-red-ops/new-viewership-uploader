@@ -2427,6 +2427,12 @@ def borrowed_viewership_ui(sf_conn):
             else:
                 st.warning(f"Mixed formats detected: {', '.join(sorted(formats))}. Upload files of the same type.")
 
+            # Auto-populate filename when file set changes
+            _file_key = tuple(f.name for f in uploaded_files)
+            if st.session_state.get("_bv_file_key") != _file_key:
+                st.session_state["_bv_file_key"] = _file_key
+                st.session_state["bv_filename"] = uploaded_file_name
+
             for r in results:
                 for w in r.warnings:
                     st.warning(w)
@@ -2461,7 +2467,6 @@ def borrowed_viewership_ui(sf_conn):
     with col_right:
         st.markdown("#### Configuration")
         borrower_platform = st.selectbox("Borrower platform", options=platform_options, key="bv_platform")
-        filename = st.text_input("Filename", value=uploaded_file_name, key="bv_filename")
 
         st.markdown("#### Lender options")
         use_lender_channel   = st.toggle("Filter lender by channel",   value=True,  key="bv_use_ch")
@@ -2522,6 +2527,7 @@ def borrowed_viewership_ui(sf_conn):
         st.divider()
         st.markdown("#### Deal Mapping")
         st.caption("Click a cell to pick from the dropdown. Select a range of cells and press Ctrl+D (or ⌘+D) to fill down.")
+        filename = st.text_input("Filename", key="bv_filename")
 
         def _match_channel(file_ch):
             if file_ch in all_lender_channels:
