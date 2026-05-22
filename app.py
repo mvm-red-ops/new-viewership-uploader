@@ -13,6 +13,7 @@ from config import load_aws_config, get_environment_name, get_config
 from src.transformations import apply_transformation, TRANSFORMATION_TEMPLATES, preview_transformation_step
 from src.wide_format_handler import detect_and_transform
 from src.logo_detection import detect_header_row
+from src.bv_file_parsers import detect_and_parse as bv_detect_and_parse
 
 # Transformation Builder Modal
 @st.dialog("🔧 Transformation Builder", width="large")
@@ -2273,7 +2274,9 @@ def borrowed_viewership_ui(sf_conn):
     from collections import defaultdict
 
     # Build cascading lookup structures from deal_grid
+    MANUAL_ALLOWED_PARTNERS = {'The Roku Channel - Linear', 'SamsungTV+'}
     partners = sorted({r[1] for r in deal_rows if r[1]})
+    manual_partners = sorted({p for p in partners if p in MANUAL_ALLOWED_PARTNERS})
     partner_to_deal_parent = {}
     partner_to_channels = defaultdict(list)
     partner_to_territories = defaultdict(list)
@@ -2300,7 +2303,7 @@ def borrowed_viewership_ui(sf_conn):
         _, col_center, _ = st.columns([1, 2, 1])
         with col_center:
             st.markdown("#### Lender (source of episode proportions)")
-            lender_partner_m = st.selectbox("Lender partner *", options=[""] + partners, key="bv_lender_partner")
+            lender_partner_m = st.selectbox("Lender partner *", options=[""] + manual_partners, key="bv_lender_partner")
             lender_channel_m, lender_territory_m = "", ""
             if lender_partner_m:
                 mc1, mc2 = st.columns(2)
@@ -2310,7 +2313,7 @@ def borrowed_viewership_ui(sf_conn):
                     lender_territory_m = st.selectbox("Lender territory *", options=[""] + sorted(partner_to_territories[lender_partner_m]), key="bv_lender_territory")
 
             st.markdown("#### Borrower (partner receiving the data)")
-            borrower_partner_m = st.selectbox("Borrower partner *", options=[""] + partners, key="bv_borrower_partner")
+            borrower_partner_m = st.selectbox("Borrower partner *", options=[""] + manual_partners, key="bv_borrower_partner")
             borrower_channel_m, borrower_territory_m = "", ""
             if borrower_partner_m:
                 mc3, mc4 = st.columns(2)
@@ -2320,8 +2323,6 @@ def borrowed_viewership_ui(sf_conn):
                     borrower_territory_m = st.selectbox("Borrower territory *", options=[""] + sorted(partner_to_territories[borrower_partner_m]), key="bv_borrower_territory")
 
             borrower_platform = st.selectbox("Borrower platform *", options=platform_options, key="bv_platform")
-            borrower_partner_label = st.selectbox("Borrower partner label *", options=[""] + partners, key="bv_partner",
-                                                   help="Written to the partner column in platform_viewership")
 
             st.markdown("#### Period")
             col_y, col_q, col_m = st.columns(3)
@@ -2340,21 +2341,31 @@ def borrowed_viewership_ui(sf_conn):
             filename = st.text_input("Filename", key="bv_filename")
 
             st.divider()
+
+            bv_result = st.session_state.get("bv_manual_result")
+            if bv_result == "success":
+                st.success("✓ Borrowed viewership inserted into platform_viewership and episode_details.")
+            elif bv_result:
+                st.error(bv_result)
+
             if st.button("Insert Borrowed Viewership", type="primary", key="bv_submit"):
                 lender_info = deal_grid_lookup.get((lender_partner_m, lender_channel_m, lender_territory_m))
                 borrower_info = deal_grid_lookup.get((borrower_partner_m, borrower_channel_m, borrower_territory_m))
                 if not all([lender_partner_m, lender_channel_m, lender_territory_m,
                              borrower_partner_m, borrower_channel_m, borrower_territory_m,
-                             borrower_platform, borrower_partner_label, topline_hov, filename]):
+                             borrower_platform, topline_hov, filename]):
+                    st.session_state["bv_manual_result"] = None
                     st.warning("Please fill in all required fields.")
                 elif not lender_info:
-                    st.error(f"No deal found for lender: {lender_partner_m} / {lender_channel_m} / {lender_territory_m}")
+                    st.session_state["bv_manual_result"] = f"Error: No deal found for lender: {lender_partner_m} / {lender_channel_m} / {lender_territory_m}"
                 elif not borrower_info:
-                    st.error(f"No deal found for borrower: {borrower_partner_m} / {borrower_channel_m} / {borrower_territory_m}")
+                    st.session_state["bv_manual_result"] = f"Error: No deal found for borrower: {borrower_partner_m} / {borrower_channel_m} / {borrower_territory_m}"
                 else:
                     from config import get_config
                     cfg = get_config()
                     db = "UPLOAD_DB_PROD" if cfg.ENVIRONMENT == "production" else "UPLOAD_DB"
+                    bcid_sql = str(borrower_info['channel_id']) if borrower_info['channel_id'] is not None else 'NULL'
+                    btid_sql = str(borrower_info['territory_id']) if borrower_info['territory_id'] is not None else 'NULL'
                     try:
                         cur.execute(f"""
                             CALL {db}.public.borrowed_viewership_data_insert(
@@ -2362,21 +2373,24 @@ def borrowed_viewership_ui(sf_conn):
                                 {year}, {month}, '{quarter}',
                                 {lender_info['channel_id']}, {lender_info['territory_id']},
                                 {borrower_info['deal_parent']},
-                                '{borrower_partner_label}',
+                                '{borrower_partner_m}',
                                 '{borrower_platform}',
                                 '{borrower_channel_m}',
                                 '{borrower_territory_m}',
+                                {bcid_sql},
+                                {btid_sql},
                                 {topline_hov},
                                 '{filename}'
                             )
                         """)
                         result = cur.fetchone()[0]
                         if result == "data inserted":
-                            st.success("✓ Borrowed viewership inserted into platform_viewership and episode_details.")
+                            st.session_state["bv_manual_result"] = "success"
                         else:
-                            st.error(f"Proc returned: {result}")
+                            st.session_state["bv_manual_result"] = f"Proc returned: {result}"
                     except Exception as e:
-                        st.error(f"Error: {e}")
+                        st.session_state["bv_manual_result"] = f"Error: {e}"
+                st.rerun()
         return
 
     # ── From File mode ────────────────────────────────────────────────────────
@@ -2392,57 +2406,38 @@ def borrowed_viewership_ui(sf_conn):
         st.markdown("#### Source File")
         uploaded_files = st.file_uploader(
             "Upload topline viewership file(s) — daily or monthly, one or more months",
-            type=["csv"], key="bv_file", label_visibility="collapsed",
+            type=["csv", "xlsx", "xlsm"], key="bv_file", label_visibility="collapsed",
             accept_multiple_files=True
         )
 
         if uploaded_files:
             uploaded_file_name = uploaded_files[0].name if len(uploaded_files) == 1 else ""
-            df_raw = pd.concat(
-                [pd.read_csv(io.BytesIO(f.read())) for f in uploaded_files],
-                ignore_index=True
-            )
-            col_map = {c.lower().strip(): c for c in df_raw.columns}
 
-            date_col = next((col_map[k] for k in ['date', 'month', 'period', 'report date'] if k in col_map), None)
-            channel_col = next((col_map[k] for k in ['channel name', 'channel_name', 'channel'] if k in col_map), None)
-            territory_col = next((col_map[k] for k in ['territory', 'country', 'region'] if k in col_map), None)
-            minutes_col = next((col_map[k] for k in ['minutes streamed', 'minutes', 'total minutes', 'mins'] if k in col_map), None)
-            hours_col = next((col_map[k] for k in ['hours', 'hov', 'hours viewed', 'total hours'] if k in col_map), None)
+            # Triage: detect format and parse each file
+            results = [bv_detect_and_parse(f.name, f.read()) for f in uploaded_files]
 
-            missing = [n for n, c in [('date/period', date_col), ('channel', channel_col), ('territory', territory_col)] if not c]
-            if not minutes_col and not hours_col:
-                missing.append('minutes or hours column')
-
-            if missing:
-                st.warning(f"Could not detect required columns: {', '.join(missing)}. Found: {list(df_raw.columns)}")
+            # Show format detection badge
+            formats = {r.format_name for r in results}
+            if len(formats) == 1:
+                r0 = results[0]
+                note = f" · {r0.format_note}" if r0.format_note else ""
+                st.caption(f"Detected: **{r0.format_name}**{note}")
+                if len(results) == 1 and r0.suggested_filename:
+                    uploaded_file_name = r0.suggested_filename
             else:
-                df_raw[date_col] = pd.to_datetime(df_raw[date_col], errors='coerce')
-                df_raw['_year'] = df_raw[date_col].dt.year.astype(int)
-                df_raw['_month'] = df_raw[date_col].dt.month.astype(int)
-                df_raw['_quarter'] = df_raw[date_col].dt.quarter.map({1: 'q1', 2: 'q2', 3: 'q3', 4: 'q4'})
+                st.warning(f"Mixed formats detected: {', '.join(sorted(formats))}. Upload files of the same type.")
 
-                if minutes_col:
-                    df_raw['_hov'] = pd.to_numeric(df_raw[minutes_col], errors='coerce') / 60.0
-                    unit_note = f"`{minutes_col}` ÷ 60 → HOV"
-                else:
-                    df_raw['_hov'] = pd.to_numeric(df_raw[hours_col], errors='coerce')
-                    unit_note = f"`{hours_col}` → HOV"
+            for r in results:
+                for w in r.warnings:
+                    st.warning(w)
 
-                daily_check = df_raw.groupby([channel_col, territory_col, '_year', '_month'])[date_col].nunique()
-                is_daily = bool((daily_check > 1).any())
-                fmt_label = "Daily — rolled up to monthly" if is_daily else "Monthly"
-                st.caption(f"Format: **{fmt_label}** · {unit_note}")
-
+            valid = [r for r in results if r.df_summary is not None]
+            if valid:
+                df_combined = pd.concat([r.df_summary for r in valid], ignore_index=True)
                 df_summary = (
-                    df_raw
-                    .groupby([channel_col, territory_col, '_year', '_month', '_quarter'], as_index=False)['_hov']
+                    df_combined
+                    .groupby(['Channel', 'Territory', 'Year', 'Month', 'Quarter'], as_index=False)['HOV']
                     .sum()
-                    .rename(columns={
-                        channel_col: 'Channel', territory_col: 'Territory',
-                        '_year': 'Year', '_month': 'Month', '_quarter': 'Quarter',
-                        '_hov': 'HOV'
-                    })
                 )
                 df_summary['HOV'] = df_summary['HOV'].round(4)
 
