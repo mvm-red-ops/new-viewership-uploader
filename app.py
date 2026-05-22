@@ -2427,11 +2427,10 @@ def borrowed_viewership_ui(sf_conn):
             else:
                 st.warning(f"Mixed formats detected: {', '.join(sorted(formats))}. Upload files of the same type.")
 
-            # Auto-populate filename when file set changes
+            # Track file set for editor key stability
             _file_key = tuple(f.name for f in uploaded_files)
             if st.session_state.get("_bv_file_key") != _file_key:
                 st.session_state["_bv_file_key"] = _file_key
-                st.session_state["bv_filename"] = uploaded_file_name
 
             for r in results:
                 for w in r.warnings:
@@ -2440,9 +2439,11 @@ def borrowed_viewership_ui(sf_conn):
             valid = [r for r in results if r.df_summary is not None]
             if valid:
                 df_combined = pd.concat([r.df_summary for r in valid], ignore_index=True)
+                # Group by Filename too so different source files with the same
+                # channel/territory/month stay as separate rows
                 df_summary = (
                     df_combined
-                    .groupby(['Channel', 'Territory', 'Year', 'Month', 'Quarter'], as_index=False)['HOV']
+                    .groupby(['Channel', 'Territory', 'Year', 'Month', 'Quarter', 'Filename'], as_index=False)['HOV']
                     .sum()
                 )
                 df_summary['HOV'] = df_summary['HOV'].round(4)
@@ -2458,7 +2459,7 @@ def borrowed_viewership_ui(sf_conn):
 
                 mask = df_summary['Channel'].isin(sel_channels) & df_summary['Territory'].isin(sel_territories)
                 df_display = (
-                    df_summary[mask][['Year', 'Month', 'Quarter', 'Channel', 'Territory', 'HOV']]
+                    df_summary[mask][['Year', 'Month', 'Quarter', 'Channel', 'Territory', 'HOV', 'Filename']]
                     .sort_values(['Year', 'Month', 'Channel', 'Territory'])
                     .reset_index(drop=True)
                 )
@@ -2518,7 +2519,8 @@ def borrowed_viewership_ui(sf_conn):
         return None, None, None
 
     if df_summary is not None and sel_channels and sel_territories and df_display is not None and len(df_display) > 0:
-        combos = df_display[['Channel', 'Territory']].drop_duplicates().values.tolist()
+        # One combo per unique source file (channel + territory + filename)
+        combos = df_display[['Channel', 'Territory', 'Filename']].drop_duplicates().values.tolist()
 
         all_lender_channels    = sorted({c for chs in partner_to_channels.values() for c in chs if c is not None})
         all_lender_territories = sorted({t for ts in partner_to_territories.values() for t in ts if t is not None})
@@ -2527,7 +2529,6 @@ def borrowed_viewership_ui(sf_conn):
         st.divider()
         st.markdown("#### Deal Mapping")
         st.caption("Click a cell to pick from the dropdown. Select a range of cells and press Ctrl+D (or ⌘+D) to fill down.")
-        filename = st.text_input("Filename", key="bv_filename")
 
         def _match_channel(file_ch):
             if file_ch in all_lender_channels:
@@ -2545,12 +2546,14 @@ def borrowed_viewership_ui(sf_conn):
             return next((t for t in all_lender_territories if t.lower() == lower), None)
 
         # Seed the editor from session state so edits survive rerenders
-        editor_key = f"bv_mapping_{uploaded_file_name}_{use_lender_channel}_{use_lender_territory}"
+        _fk = "_".join(st.session_state.get("_bv_file_key", ()))
+        editor_key = f"bv_mapping_{_fk}_{use_lender_channel}_{use_lender_territory}"
         init_key = f"{editor_key}_init"
         if init_key not in st.session_state:
             rows = []
-            for ch, ter in combos:
+            for ch, ter, fn in combos:
                 row = {'Skip': False, 'File Channel': ch, 'File Territory': ter,
+                       'Filename': fn,
                        'Lender Partner': None, 'Borrower Partner': None,
                        'Borrower Channel': _match_channel(ch)}
                 if use_lender_channel:   row['Lender Channel']   = _match_channel(ch)
@@ -2562,6 +2565,7 @@ def borrowed_viewership_ui(sf_conn):
             'Skip':            st.column_config.CheckboxColumn('✕', help="Exclude this row from Insert All", default=False),
             'File Channel':    st.column_config.TextColumn('File Channel',    disabled=True),
             'File Territory':  st.column_config.TextColumn('File Territory',  disabled=True),
+            'Filename':        st.column_config.TextColumn('Filename'),
             'Lender Partner':  st.column_config.SelectboxColumn('Lender Partner',  options=partners),
             'Borrower Partner': st.column_config.SelectboxColumn('Borrower Partner', options=partners),
             'Borrower Channel': st.column_config.SelectboxColumn('Borrower Channel', options=all_borrower_channels),
@@ -2584,14 +2588,14 @@ def borrowed_viewership_ui(sf_conn):
         )
 
         skipped_rows = edited_df[edited_df['Skip'] == True]
-        if len(skipped_rows) and filename:
+        if len(skipped_rows):
             from config import get_config as _get_cfg
             _cfg = _get_cfg()
             _pv_db = "NOSEY_PROD" if _cfg.ENVIRONMENT == "production" else "TEST_STAGING"
             if st.button(f"🗑️ Delete skipped rows from DB ({len(skipped_rows)} group(s))", key="bv_del_skipped"):
                 st.session_state["bv_del_skipped_confirm"] = True
             if st.session_state.get("bv_del_skipped_confirm"):
-                st.warning(f"Will delete all rows for the {len(skipped_rows)} skipped channel/territory group(s) under filename **{filename}**. Cannot be undone.")
+                st.warning(f"Will delete all rows for the {len(skipped_rows)} skipped group(s). Cannot be undone.")
                 dsc1, dsc2 = st.columns(2)
                 with dsc1:
                     if st.button("✓ Confirm", type="primary", key="bv_del_skipped_ok"):
@@ -2600,7 +2604,9 @@ def borrowed_viewership_ui(sf_conn):
                         for _, sr in skipped_rows.iterrows():
                             _ch  = sr['File Channel'].replace("'", "''")
                             _ter = sr['File Territory'].replace("'", "''")
-                            _fn  = filename.replace("'", "''")
+                            _fn  = (sr.get('Filename') or '').replace("'", "''")
+                            if not _fn:
+                                continue
                             _where = f"filename = '{_fn}' AND channel = '{_ch}' AND territory = '{_ter}'"
                             _cur.execute(f"DELETE FROM {_pv_db}.public.platform_viewership WHERE {_where}")
                             del_pv += _cur.rowcount
@@ -2617,7 +2623,8 @@ def borrowed_viewership_ui(sf_conn):
 
         active_df = edited_df[edited_df['Skip'] != True]
         all_mapped = active_df['Lender Partner'].notna().all() and active_df['Borrower Partner'].notna().all()
-        ready = all_mapped and bool(borrower_platform) and bool(filename) and len(active_df) > 0
+        all_have_filename = (active_df['Filename'].notna() & (active_df['Filename'].str.strip() != '')).all()
+        ready = all_mapped and all_have_filename and bool(borrower_platform) and len(active_df) > 0
 
         if st.button("Insert All", type="primary", key="bv_submit", disabled=not ready):
             from config import get_config
@@ -2626,32 +2633,34 @@ def borrowed_viewership_ui(sf_conn):
 
             errors = []
             successes = 0
-            # Only insert rows not marked as skipped
-            active_channels = set(zip(active_df['File Channel'], active_df['File Territory']))
-            df_insert = df_display[df_display.apply(lambda r: (r['Channel'], r['Territory']) in active_channels, axis=1)]
+            # Only insert rows not marked as skipped — keyed by (channel, territory, filename)
+            active_combos = set(zip(active_df['File Channel'], active_df['File Territory'], active_df['Filename']))
+            df_insert = df_display[df_display.apply(
+                lambda r: (r['Channel'], r['Territory'], r['Filename']) in active_combos, axis=1
+            )]
             total = len(df_insert)
             progress = st.progress(0, text="Inserting…")
 
-            # Build mapping from the edited grid keyed by (channel, territory)
             grid_map = {
-                (r['File Channel'], r['File Territory']): r
+                (r['File Channel'], r['File Territory'], r['Filename']): r
                 for _, r in active_df.iterrows()
             }
 
             for step, (i, row) in enumerate(df_insert.iterrows()):
-                grid_row = grid_map.get((row['Channel'], row['Territory']), {})
+                grid_row = grid_map.get((row['Channel'], row['Territory'], row['Filename']), {})
                 lp = grid_row.get('Lender Partner') or ''
                 lc = grid_row.get('Lender Channel')   if use_lender_channel   else None
                 lt = grid_row.get('Lender Territory') if use_lender_territory else None
                 bp = grid_row.get('Borrower Partner') or ''
                 bc = grid_row.get('Borrower Channel') or row['Channel']
+                fn = (grid_row.get('Filename') or '').replace("'", "''")
 
                 borrower_ter = _ter_expand.get((row['Territory'] or '').upper(), row['Territory'])
                 lender_dp, lender_cid, lender_tid      = _resolve_lender(lp, lc, lt)
                 borrower_dp, borrower_cid, borrower_tid = _resolve_borrower(bp, bc, borrower_ter)
 
                 if lender_dp is None or borrower_dp is None:
-                    errors.append(f"{row['Channel']} / {row['Territory']} {int(row['Year'])}-{int(row['Month'])}: could not resolve deal")
+                    errors.append(f"{row['Channel']} / {row['Territory']} {int(row['Year'])}-{int(row['Month'])} [{fn}]: could not resolve deal")
                     progress.progress((step + 1) / total)
                     continue
 
@@ -2674,16 +2683,16 @@ def borrowed_viewership_ui(sf_conn):
                             {bcid_sql},
                             {btid_sql},
                             {row['HOV']},
-                            '{filename}'
+                            '{fn}'
                         )
                     """)
                     result = cur.fetchone()[0]
                     if result == "data inserted":
                         successes += 1
                     else:
-                        errors.append(f"{row['Channel']} / {row['Territory']} {int(row['Year'])}-{int(row['Month'])}: {result}")
+                        errors.append(f"{row['Channel']} / {row['Territory']} {int(row['Year'])}-{int(row['Month'])} [{fn}]: {result}")
                 except Exception as e:
-                    errors.append(f"{row['Channel']} / {row['Territory']} {int(row['Year'])}-{int(row['Month'])}: {e}")
+                    errors.append(f"{row['Channel']} / {row['Territory']} {int(row['Year'])}-{int(row['Month'])} [{fn}]: {e}")
 
                 progress.progress((step + 1) / total, text=f"Inserting {step + 1}/{total}…")
 

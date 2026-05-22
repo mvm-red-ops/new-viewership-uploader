@@ -167,6 +167,7 @@ class DirectTVXlsmParser:
             'Month': month,
             'Quarter': _quarter(month),
             'HOV': round(total_hov, 4),
+            'Filename': suggested_filename,
         }])
 
         return ParseResult(
@@ -256,6 +257,7 @@ class GenericCsvParser:
             })
         )
         df_summary['HOV'] = df_summary['HOV'].round(4)
+        df_summary['Filename'] = filename
 
         return ParseResult(
             df_summary=df_summary, suggested_filename=filename,
