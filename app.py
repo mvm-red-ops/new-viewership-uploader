@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import json
+import io
 from datetime import datetime
 from typing import Dict, List, Optional
 import re
@@ -1240,6 +1241,85 @@ def main():
     elif st.session_state.active_tab == 2:
         load_data_tab(sf_conn)
 
+def _try_read_pluto_multi_sheet_xlsx(file_bytes: bytes):
+    """
+    Detect and read a Pluto multi-sheet xlsx (Summary + numbered monthly tabs).
+    Returns (df, info_message) if detected, else (None, None).
+
+    Sheet names are sequential (1, 2, 3) — NOT absolute month numbers. The actual
+    year/month for each tab is read from the Summary sheet's # and Month columns so
+    this works correctly for any quarter (e.g. Q3 tab '1' = July, not January).
+    Detection uses pandas exclusively (no direct openpyxl calls) for reliability.
+    """
+    # Step 1: peek at all sheets to detect Pluto format
+    xl_peek = pd.read_excel(io.BytesIO(file_bytes), sheet_name=None, header=None, nrows=5)
+    sheet_names = list(xl_peek.keys())
+    if not sheet_names:
+        return None, None
+
+    first_sheet_df = xl_peek[sheet_names[0]]
+    is_pluto = any(
+        'PLUTO TV' in str(v).upper()
+        for v in first_sheet_df.values.flatten()
+        if pd.notna(v)
+    )
+    if not is_pluto:
+        return None, None
+
+    data_sheets = [n for n in sheet_names if str(n).strip().lstrip('-').isdigit()]
+    if not data_sheets:
+        return None, None
+
+    # Step 2: build seq_num → (year, month) from the Summary sheet
+    summary_name = sheet_names[0]
+    df_summary_peek = pd.read_excel(io.BytesIO(file_bytes), sheet_name=summary_name, header=None, nrows=10)
+    summary_header = detect_header_row(df_summary_peek, max_rows_to_check=10)
+    df_summary = pd.read_excel(io.BytesIO(file_bytes), sheet_name=summary_name, header=summary_header)
+    df_summary.columns = df_summary.columns.str.strip()
+    df_summary = df_summary.dropna(how='all')
+
+    seq_col = next((c for c in df_summary.columns if str(c).strip() == '#'), None)
+    month_col = next((c for c in df_summary.columns if str(c).strip().lower() == 'month'), None)
+
+    month_map = {}  # seq_num (int) → (year, month)
+    if seq_col and month_col:
+        for _, row in df_summary.iterrows():
+            seq = row[seq_col]
+            month_val = row[month_col]
+            if pd.isna(seq) or pd.isna(month_val):
+                continue
+            try:
+                seq = int(seq)
+                dt = pd.to_datetime(month_val)
+                month_map[seq] = (dt.year, dt.month)
+            except Exception:
+                continue
+
+    # Step 3: read each monthly data sheet
+    dfs = []
+    for sheet_name in data_sheets:
+        seq = int(str(sheet_name).strip())
+        year_num, month_num = month_map.get(seq, (None, None))
+
+        df_peek = pd.read_excel(io.BytesIO(file_bytes), sheet_name=sheet_name, header=None, nrows=10)
+        header_row = detect_header_row(df_peek, max_rows_to_check=10)
+        df_sheet = pd.read_excel(io.BytesIO(file_bytes), sheet_name=sheet_name, header=header_row)
+        df_sheet.columns = df_sheet.columns.str.strip()
+        df_sheet = df_sheet.dropna(how='all')
+        df_sheet = df_sheet.loc[:, df_sheet.notna().any()]
+        df_sheet['Month'] = month_num
+        df_sheet['Year'] = year_num
+        dfs.append(df_sheet)
+
+    df = pd.concat(dfs, ignore_index=True)
+    month_labels = [
+        f"{n}={'?' if month_map.get(int(str(n).strip())) is None else pd.Timestamp(year=month_map[int(str(n).strip())][0], month=month_map[int(str(n).strip())][1], day=1).strftime('%b %Y')}"
+        for n in data_sheets
+    ]
+    info = f"Pluto multi-sheet xlsx detected: combined {len(data_sheets)} monthly tab(s) ({', '.join(month_labels)}) → {len(df)} rows"
+    return df, info
+
+
 def upload_and_map_tab(sf_conn):
     """Tab for uploading files and creating/editing mappings"""
 
@@ -1369,17 +1449,23 @@ def upload_and_map_tab(sf_conn):
 
                     # Read file with logo/banner row detection
                     uploaded_file.seek(0)
+                    pluto_info = None
                     if file_type == 'csv':
                         df_peek = pd.read_csv(uploaded_file, header=None, nrows=25)
                         header_row = detect_header_row(df_peek, max_rows_to_check=25)
                         uploaded_file.seek(0)
                         df = pd.read_csv(uploaded_file, header=header_row)
                     else:
-                        df_peek = pd.read_excel(uploaded_file, header=None, nrows=25)
-                        header_row = detect_header_row(df_peek, max_rows_to_check=25)
-                        uploaded_file.seek(0)
-                        df = pd.read_excel(uploaded_file, header=header_row)
+                        file_bytes = uploaded_file.read()
+                        df, pluto_info = _try_read_pluto_multi_sheet_xlsx(file_bytes)
+                        if df is None:
+                            df_peek = pd.read_excel(io.BytesIO(file_bytes), header=None, nrows=25)
+                            header_row = detect_header_row(df_peek, max_rows_to_check=25)
+                            df = pd.read_excel(io.BytesIO(file_bytes), header=header_row)
                     df.columns = df.columns.str.strip()
+
+                    if pluto_info:
+                        st.info(f"📋 {pluto_info}")
 
                     # Detect and transform wide format (dates as columns) to long format (dates as rows)
                     uploaded_file.seek(0)
@@ -2895,10 +2981,14 @@ def load_data_tab(sf_conn):
                             uploaded_file.seek(0)
                             df = pd.read_csv(uploaded_file, header=header_row)
                         else:
-                            df_peek = pd.read_excel(uploaded_file, header=None, nrows=15)
-                            header_row = detect_header_row(df_peek)
-                            uploaded_file.seek(0)
-                            df = pd.read_excel(uploaded_file, header=header_row)
+                            file_bytes = uploaded_file.read()
+                            df, pluto_info = _try_read_pluto_multi_sheet_xlsx(file_bytes)
+                            if df is None:
+                                df_peek = pd.read_excel(io.BytesIO(file_bytes), header=None, nrows=15)
+                                header_row = detect_header_row(df_peek)
+                                df = pd.read_excel(io.BytesIO(file_bytes), header=header_row)
+                            elif pluto_info:
+                                st.info(f"📋 {pluto_info}")
                         df.columns = df.columns.str.strip()
 
                         # Filter out completely empty rows (all NaN/null values)
