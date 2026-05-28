@@ -2360,7 +2360,7 @@ def borrowed_viewership_ui(sf_conn):
     from collections import defaultdict
 
     # Build cascading lookup structures from deal_grid
-    MANUAL_ALLOWED_PARTNERS = {'The Roku Channel - Linear', 'SamsungTV+', 'LG', 'Cineverse'}
+    MANUAL_ALLOWED_PARTNERS = {'The Roku Channel - Linear', 'SamsungTV+', 'LG', 'Cineverse', 'Sling TV'}
     partners = sorted({r[1] for r in deal_rows if r[1]})
     manual_partners = sorted({p for p in partners if p in MANUAL_ALLOWED_PARTNERS})
     partner_to_deal_parent = {}
