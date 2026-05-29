@@ -2350,7 +2350,7 @@ def borrowed_viewership_ui(sf_conn):
         """)
         deal_rows = cur.fetchall()
         cur.execute(
-            "SELECT DISTINCT platform FROM dictionary.public.viewership_file_formats ORDER BY platform"
+            "SELECT DISTINCT platform FROM dictionary.public.active_deals WHERE platform IS NOT NULL ORDER BY platform"
         )
         platform_options = [""] + [r[0] for r in cur.fetchall()]
     except Exception as e:
