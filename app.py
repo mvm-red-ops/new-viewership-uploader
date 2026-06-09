@@ -1311,12 +1311,43 @@ def _try_read_pluto_multi_sheet_xlsx(file_bytes: bytes):
         df_sheet['Year'] = year_num
         dfs.append(df_sheet)
 
+    # Detect quarterly-aggregate format: if all tabs have identical numeric column
+    # sums, each tab contains the full quarterly data (not just that month's slice).
+    # Divide numeric columns by num months so each month gets its correct share.
+    quarterly_aggregate = False
+    if len(dfs) > 1:
+        try:
+            def _numeric_sums(df_i):
+                return df_i.select_dtypes(include='number').drop(
+                    columns=['Month', 'Year'], errors='ignore'
+                ).sum()
+
+            sums_0 = _numeric_sums(dfs[0])
+            non_zero = sums_0[sums_0.abs() > 0].index
+            if len(non_zero) > 0:
+                quarterly_aggregate = all(
+                    abs(_numeric_sums(dfs[i])[c] - sums_0[c]) / abs(sums_0[c]) < 0.001
+                    for i in range(1, len(dfs))
+                    for c in non_zero
+                    if c in _numeric_sums(dfs[i]).index
+                )
+        except Exception:
+            quarterly_aggregate = False
+
+    if quarterly_aggregate:
+        num_months = len(dfs)
+        for df_i in dfs:
+            for col in df_i.select_dtypes(include='number').columns:
+                if col not in ('Month', 'Year'):
+                    df_i[col] = df_i[col] / num_months
+
     df = pd.concat(dfs, ignore_index=True)
     month_labels = [
         f"{n}={'?' if month_map.get(int(str(n).strip())) is None else pd.Timestamp(year=month_map[int(str(n).strip())][0], month=month_map[int(str(n).strip())][1], day=1).strftime('%b %Y')}"
         for n in data_sheets
     ]
-    info = f"Pluto multi-sheet xlsx detected: combined {len(data_sheets)} monthly tab(s) ({', '.join(month_labels)}) → {len(df)} rows"
+    aggregate_note = f" (quarterly totals divided by {len(data_sheets)} months)" if quarterly_aggregate else ""
+    info = f"Pluto multi-sheet xlsx detected: combined {len(data_sheets)} monthly tab(s) ({', '.join(month_labels)}) → {len(df)} rows{aggregate_note}"
     return df, info
 
 
@@ -2423,7 +2454,9 @@ def borrowed_viewership_ui(sf_conn):
                 month_name = st.selectbox("Month *", options=list(month_map.keys()), key="bv_month")
                 month = month_map[month_name]
 
-            topline_hov = st.number_input("Topline HOV (hours) *", min_value=0.0, step=0.01, key="bv_hov")
+            hov_unit = st.radio("Unit", ["Hours", "Minutes"], horizontal=True, key="bv_hov_unit")
+            topline_hov_raw = st.number_input(f"Topline HOV ({hov_unit.lower()}) *", min_value=0.0, step=0.01, key="bv_hov")
+            topline_hov = topline_hov_raw / 60.0 if hov_unit == "Minutes" else topline_hov_raw
             filename = st.text_input("Filename", key="bv_filename")
 
             st.divider()
@@ -3310,6 +3343,21 @@ def get_quarterly_batches(df, column_mappings, data_type, month, quarter):
     if data_type not in ('Revenue', 'Viewership_Revenue') or month or not quarter:
         return [(df, month)]
 
+    # If the df already has per-row Month assignments (e.g. from Pluto multi-sheet xlsx),
+    # split by month value so each batch gets the correct month name for apply_column_mappings.
+    if 'Month' in df.columns and df['Month'].notna().any():
+        month_num_to_name = {
+            1: 'January', 2: 'February', 3: 'March', 4: 'April',
+            5: 'May', 6: 'June', 7: 'July', 8: 'August',
+            9: 'September', 10: 'October', 11: 'November', 12: 'December'
+        }
+        batches = []
+        for month_val, group in df.groupby('Month'):
+            month_name = month_num_to_name.get(int(month_val), month)
+            batches.append((group.copy(), month_name))
+        if batches:
+            return batches
+
     # Check if Date source column exists in the file
     date_mapping = column_mappings.get('Date')
     date_source_col = None
@@ -3326,36 +3374,57 @@ def get_quarterly_batches(df, column_mappings, data_type, month, quarter):
     if date_in_file:
         return [(df, month)]
 
-    # Quarterly split — find revenue source column
+    # Quarterly split — find all numeric aggregate source columns to divide by 3
     months = QUARTER_MONTHS.get(quarter.lower(), [])
     if not months:
         return [(df, month)]
 
-    rev_mapping = column_mappings.get('Revenue')
-    rev_source_col = None
-    if isinstance(rev_mapping, dict):
-        rev_source_col = rev_mapping.get('source_column')
-    elif isinstance(rev_mapping, str):
-        rev_source_col = rev_mapping
-
-    actual_rev_col = None
-    if rev_source_col:
-        if rev_source_col in df.columns:
-            actual_rev_col = rev_source_col
+    def _resolve_source_col(mapping):
+        if isinstance(mapping, dict):
+            src = mapping.get('source_column')
+        elif isinstance(mapping, str):
+            src = mapping
         else:
-            actual_rev_col = normalized_cols.get(rev_source_col.strip().lower())
+            return None
+        if not src:
+            return None
+        if src in df.columns:
+            return src
+        return normalized_cols.get(src.strip().lower())
+
+    # Build (col_name, transform_config_or_None) for each aggregate field to divide
+    cols_to_divide = []
+
+    rev_mapping = column_mappings.get('Revenue')
+    if rev_mapping:
+        col = _resolve_source_col(rev_mapping)
+        if col:
+            cols_to_divide.append((col, None))
+
+    twt_mapping = column_mappings.get('Total Watch Time')
+    if twt_mapping:
+        col = _resolve_source_col(twt_mapping)
+        transform_config = twt_mapping.get('transformation') if isinstance(twt_mapping, dict) else None
+        if col:
+            cols_to_divide.append((col, transform_config))
 
     batches = []
     for m in months:
         df_copy = df.copy()
-        if actual_rev_col:
-            df_copy[actual_rev_col] = pd.to_numeric(
-                df_copy[actual_rev_col].astype(str)
-                    .str.replace('$', '', regex=False)
-                    .str.replace(',', '', regex=False)
-                    .str.replace(' ', '', regex=False),
-                errors='coerce'
-            ) / 3
+        for col, transform_config in cols_to_divide:
+            if transform_config:
+                # Parse to numeric first (e.g. time string → hours), then divide by 3.
+                # apply_column_mappings will re-apply parse_time, which is a no-op on plain floats.
+                series = apply_transformation(df_copy[col], transform_config)
+                df_copy[col] = series / 3
+            else:
+                df_copy[col] = pd.to_numeric(
+                    df_copy[col].astype(str)
+                        .str.replace('$', '', regex=False)
+                        .str.replace(',', '', regex=False)
+                        .str.replace(' ', '', regex=False),
+                    errors='coerce'
+                ) / 3
         batches.append((df_copy, m))
     return batches
 
