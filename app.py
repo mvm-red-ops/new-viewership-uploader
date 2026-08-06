@@ -1214,6 +1214,14 @@ def main():
     # Use radio buttons styled as tabs to preserve state across reruns
     tab_names = ["📤 Upload & Map", "🔍 Template Lookup", "📥 Load Data"]
 
+    # Sync radio widget to match active_tab BEFORE rendering
+    # (Streamlit ignores `index` after first render; must set widget key directly)
+    nav_key = "nav_tab"
+    if nav_key in st.session_state:
+        stored_idx = tab_names.index(st.session_state[nav_key])
+        if stored_idx != st.session_state.active_tab:
+            st.session_state[nav_key] = tab_names[st.session_state.active_tab]
+
     # Wrap navigation in a container to apply specific styling
     st.markdown('<div class="tab-navigation">', unsafe_allow_html=True)
     selected = st.radio(
@@ -1221,6 +1229,7 @@ def main():
         tab_names,
         index=st.session_state.active_tab,
         horizontal=True,
+        key=nav_key,
         label_visibility="collapsed"
     )
     st.markdown('</div>', unsafe_allow_html=True)
