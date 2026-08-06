@@ -1214,10 +1214,6 @@ def main():
     # Use radio buttons styled as tabs to preserve state across reruns
     tab_names = ["📤 Upload & Map", "🔍 Template Lookup", "📥 Load Data"]
 
-    # Create a callback to update active tab
-    def set_active_tab():
-        st.session_state.active_tab = tab_names.index(st.session_state.selected_tab)
-
     # Wrap navigation in a container to apply specific styling
     st.markdown('<div class="tab-navigation">', unsafe_allow_html=True)
     selected = st.radio(
@@ -1225,11 +1221,12 @@ def main():
         tab_names,
         index=st.session_state.active_tab,
         horizontal=True,
-        key="selected_tab",
-        on_change=set_active_tab,
         label_visibility="collapsed"
     )
     st.markdown('</div>', unsafe_allow_html=True)
+
+    # Sync active_tab from the radio selection
+    st.session_state.active_tab = tab_names.index(selected)
 
     st.markdown("---")
 
@@ -2369,7 +2366,6 @@ def display_configs(configs, sf_conn):
                     st.session_state.prefill_channel = config.get('CHANNEL', '') or ''
                     st.session_state.prefill_territory = config.get('TERRITORY', '') or ''
                     st.session_state.active_tab = 2
-                    del st.session_state["selected_tab"]
                     st.rerun()
 
                 if st.button("✏️ Edit", key=f"edit_{config['CONFIG_ID']}", width='stretch'):
@@ -2397,7 +2393,6 @@ def display_configs(configs, sf_conn):
                         st.session_state.filename = None
 
                     st.session_state.active_tab = 0
-                    del st.session_state["selected_tab"]
                     st.rerun()
 
                 if st.button("🗑️ Delete", key=f"delete_{config['CONFIG_ID']}", width='stretch'):
