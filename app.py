@@ -641,7 +641,7 @@ def transformation_builder_modal(column_name, sample_data, full_data=None):
                         st.error(f"Error: {str(e)}")
 
         # Button to add new step
-        if st.button("➕ Add Step", key=f"modal_add_step_{column_name}", use_container_width=True):
+        if st.button("➕ Add Step", key=f"modal_add_step_{column_name}", width='stretch'):
             steps.append({'type': 'split', 'params': {'delimiter': ','}, 'ui_type': 'Split'})
             st.rerun()
 
@@ -679,7 +679,7 @@ def transformation_builder_modal(column_name, sample_data, full_data=None):
 
     # Profile Data button (only for custom steps, not templates)
     if steps and transformation_config and approach == "Build Custom Steps":
-        if st.button("🔍 Profile Data", use_container_width=True, help="Analyze transformation across all data to detect issues"):
+        if st.button("🔍 Profile Data", width='stretch', help="Analyze transformation across all data to detect issues"):
             # Close transformation builder modal
             st.session_state[f"modal_open_{column_name}"] = False
             # Open profile modal
@@ -692,7 +692,7 @@ def transformation_builder_modal(column_name, sample_data, full_data=None):
     col1, col2 = st.columns(2)
 
     with col1:
-        if st.button("✅ Apply Transformation", type="primary", use_container_width=True):
+        if st.button("✅ Apply Transformation", type="primary", width='stretch'):
             # Store the transformation config in session state
             st.session_state[f"transform_config_{column_name}"] = transformation_config
             st.session_state[f"transform_applied_{column_name}"] = True
@@ -700,7 +700,7 @@ def transformation_builder_modal(column_name, sample_data, full_data=None):
             st.rerun()
 
     with col2:
-        if st.button("Cancel", use_container_width=True):
+        if st.button("Cancel", width='stretch'):
             st.session_state[f"transform_applied_{column_name}"] = False
             st.session_state[f"modal_open_{column_name}"] = False
             st.rerun()
@@ -885,7 +885,7 @@ def profile_data_modal(column_name, transformation_config, full_data, steps):
         st.code(traceback.format_exc())
 
     # Close button
-    if st.button("Close", use_container_width=True):
+    if st.button("Close", width='stretch'):
         st.session_state[f"profile_modal_open_{column_name}"] = False
         st.rerun()
 
@@ -1546,7 +1546,7 @@ def upload_and_map_tab(sf_conn):
                     with col_warn:
                         st.warning(f"⚠️ Configuration exists for {platform} - {partner_display}. Load it or create new.", icon="⚠️")
                     with col_load:
-                        if st.button("Load Existing", use_container_width=True):
+                        if st.button("Load Existing", width='stretch'):
                             st.session_state.existing_config = existing_config
                             st.session_state.edit_mode = True
                             st.session_state.config_id = existing_config['CONFIG_ID']
@@ -1582,7 +1582,7 @@ def upload_and_map_tab(sf_conn):
                 data_type_display_header = data_type_reverse_map.get(data_type, data_type) if data_type else '(not set)'
                 st.markdown(f"**File:** {filename} • **Platform:** {platform} • **Partner:** {partner if partner else '(platform-wide)'} • **Type:** {data_type_display_header}")
             with col_new:
-                if st.button("🔄 Upload New File", use_container_width=True):
+                if st.button("🔄 Upload New File", width='stretch'):
                     st.session_state.df = None
                     st.session_state.filename = None
                     st.session_state.platform = None
@@ -1693,7 +1693,7 @@ def upload_and_map_tab(sf_conn):
             with left_col:
                 with st.container(height=800):
                     st.subheader("📋 Data Preview")
-                    st.dataframe(df.head(50), use_container_width=True)
+                    st.dataframe(df.head(50), width='stretch')
 
                     st.subheader("📊 Column Information")
                     col_info = []
@@ -1706,7 +1706,7 @@ def upload_and_map_tab(sf_conn):
                             "Sample Values": ", ".join([str(v)[:30] for v in sample_values])
                         })
 
-                    st.dataframe(pd.DataFrame(col_info), use_container_width=True)
+                    st.dataframe(pd.DataFrame(col_info), width='stretch')
 
             # RIGHT COLUMN: Column Mapping
             with right_col:
@@ -2083,7 +2083,7 @@ def upload_and_map_tab(sf_conn):
                     ]
 
                     button_label = f"➕ Add Optional Column ({len(available_cols)} available)"
-                    if st.button(button_label, use_container_width=True, disabled=(len(available_cols) == 0)):
+                    if st.button(button_label, width='stretch', disabled=(len(available_cols) == 0)):
                         # Add the first available column that hasn't been added yet (skip section headers)
                         if available_cols:
                             st.session_state.optional_columns.append(available_cols[0])
@@ -2098,7 +2098,7 @@ def upload_and_map_tab(sf_conn):
                 col1, col2, col3 = st.columns([1, 1, 2])
 
                 with col1:
-                    if st.button("💾 Save Configuration", type="primary", use_container_width=True):
+                    if st.button("💾 Save Configuration", type="primary", width='stretch'):
                         try:
                             # Use "DEFAULT" for blank partner
                             partner_value = partner.strip() if partner.strip() else "DEFAULT"
@@ -2158,7 +2158,7 @@ def upload_and_map_tab(sf_conn):
 
                                     col_yes, col_no = st.columns(2)
                                     with col_yes:
-                                        if st.button("✅ Yes, Update It", use_container_width=True):
+                                        if st.button("✅ Yes, Update It", width='stretch'):
                                             sf_conn.update_config(existing_config['config_id'], config_data)
                                             st.success("Configuration updated successfully!")
 
@@ -2178,7 +2178,7 @@ def upload_and_map_tab(sf_conn):
                                             st.session_state.data_type = None
                                             st.rerun()
                                     with col_no:
-                                        if st.button("❌ Cancel", use_container_width=True):
+                                        if st.button("❌ Cancel", width='stretch'):
                                             st.info("Save cancelled. You can edit the existing config in the 'Template Lookup' tab.")
                                 else:
                                     # No existing config - safe to insert
@@ -2205,7 +2205,7 @@ def upload_and_map_tab(sf_conn):
                             st.error(f"Error saving configuration: {str(e)}")
 
                 with col2:
-                    if st.button("🔄 Reset", use_container_width=True):
+                    if st.button("🔄 Reset", width='stretch'):
                         st.session_state.edit_mode = False
                         st.session_state.config_id = None
                         st.session_state.existing_config = None
@@ -2353,7 +2353,7 @@ def display_configs(configs, sf_conn):
                         mappings_list.append({"Required Field": k, "Mapped Column": str(v)})
 
                 mappings_df = pd.DataFrame(mappings_list)
-                st.dataframe(mappings_df, use_container_width=True, hide_index=True)
+                st.dataframe(mappings_df, width='stretch', hide_index=True)
 
                 if config.get('SOURCE_COLUMNS'):
                     with st.expander("View Source Columns"):
@@ -2363,16 +2363,16 @@ def display_configs(configs, sf_conn):
                 st.write("")  # Spacer
 
                 # Use for Upload button — pre-fills Load Data tab
-                if st.button("📤 Use for Upload", key=f"use_{config['CONFIG_ID']}", use_container_width=True, type="primary"):
+                if st.button("📤 Use for Upload", key=f"use_{config['CONFIG_ID']}", width='stretch', type="primary"):
                     st.session_state.prefill_platform = config['PLATFORM']
                     st.session_state.prefill_partner = config['PARTNER'] if config['PARTNER'] != 'DEFAULT' else ''
                     st.session_state.prefill_channel = config.get('CHANNEL', '') or ''
                     st.session_state.prefill_territory = config.get('TERRITORY', '') or ''
                     st.session_state.active_tab = 2
-                    st.session_state.selected_tab = "📥 Load Data"
+                    del st.session_state["selected_tab"]
                     st.rerun()
 
-                if st.button("✏️ Edit", key=f"edit_{config['CONFIG_ID']}", use_container_width=True):
+                if st.button("✏️ Edit", key=f"edit_{config['CONFIG_ID']}", width='stretch'):
                     st.session_state.existing_config = config
                     st.session_state.edit_mode = True
                     st.session_state.config_id = config['CONFIG_ID']
@@ -2397,10 +2397,10 @@ def display_configs(configs, sf_conn):
                         st.session_state.filename = None
 
                     st.session_state.active_tab = 0
-                    st.session_state.selected_tab = "📤 Upload & Map"
+                    del st.session_state["selected_tab"]
                     st.rerun()
 
-                if st.button("🗑️ Delete", key=f"delete_{config['CONFIG_ID']}", use_container_width=True):
+                if st.button("🗑️ Delete", key=f"delete_{config['CONFIG_ID']}", width='stretch'):
                     try:
                         sf_conn.delete_config(config['CONFIG_ID'])
                         st.success("Configuration deleted successfully!")
@@ -2626,7 +2626,7 @@ def borrowed_viewership_ui(sf_conn):
                     .sort_values(['Year', 'Month', 'Channel', 'Territory'])
                     .reset_index(drop=True)
                 )
-                st.dataframe(df_display, use_container_width=True, hide_index=True)
+                st.dataframe(df_display, width='stretch', hide_index=True)
 
     with col_right:
         st.markdown("#### Configuration")
@@ -2745,7 +2745,7 @@ def borrowed_viewership_ui(sf_conn):
         edited_df = st.data_editor(
             st.session_state[init_key],
             column_config=col_config,
-            use_container_width=True,
+            width='stretch',
             hide_index=True,
             key=editor_key,
         )
@@ -3153,7 +3153,7 @@ def load_data_tab(sf_conn):
                             preview_df = pd.concat(preview_parts, ignore_index=True) if len(preview_parts) > 1 else preview_parts[0]
 
                             st.caption("📊 This shows what will be loaded to Snowflake (after transformations)")
-                            st.dataframe(preview_df.head(10), use_container_width=True)
+                            st.dataframe(preview_df.head(10), width='stretch')
 
                             # Show which columns were mapped (helps debug optional column issues)
                             mapped_cols = list(preview_df.columns)
@@ -3167,7 +3167,7 @@ def load_data_tab(sf_conn):
                         except Exception as e:
                             st.warning(f"Could not generate transformed preview: {str(e)}")
                             st.caption("Showing raw data instead:")
-                            st.dataframe(file_info[0]['df'].head(10), use_container_width=True)
+                            st.dataframe(file_info[0]['df'].head(10), width='stretch')
 
                     # Apply mappings and load
                     st.subheader("3. Load Data")
@@ -3180,7 +3180,7 @@ def load_data_tab(sf_conn):
                     upload_button = st.button(
                         "🚀 Load All Files to Platform Viewership",
                         type="primary",
-                        use_container_width=True,
+                        width='stretch',
                         disabled=st.session_state.upload_in_progress
                     )
 
@@ -3375,7 +3375,7 @@ def load_data_tab(sf_conn):
                             st.divider()
                             col1, col2, col3 = st.columns([1, 2, 1])
                             with col2:
-                                if st.button("📤 Upload Another File", type="primary", use_container_width=True):
+                                if st.button("📤 Upload Another File", type="primary", width='stretch'):
                                     # Clear the file uploader by clearing session state
                                     # Note: Streamlit file_uploader doesn't have a direct clear method,
                                     # but we can trigger a rerun to reset the widget
