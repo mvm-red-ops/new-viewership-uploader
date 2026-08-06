@@ -2969,7 +2969,7 @@ def load_data_tab(sf_conn):
         quarter = st.selectbox(
             "Quarter *",
             options=["Q1", "Q2", "Q3", "Q4"],
-            index=2,  # Default to Q3
+            index=1,  # Default to Q2
             help="Required. Select the quarter for this data"
         )
 
