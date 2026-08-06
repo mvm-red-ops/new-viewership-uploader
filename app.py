@@ -1211,18 +1211,13 @@ def main():
             return
 
     # Tabs for different functionalities with session state
-    # Use radio buttons styled as tabs to preserve state across reruns
     tab_names = ["📤 Upload & Map", "🔍 Template Lookup", "📥 Load Data"]
 
-    # Sync radio widget to match active_tab BEFORE rendering
-    # (Streamlit ignores `index` after first render; must set widget key directly)
+    # If a button programmatically requested a tab switch, force the radio widget
     nav_key = "nav_tab"
-    if nav_key in st.session_state:
-        stored_idx = tab_names.index(st.session_state[nav_key])
-        if stored_idx != st.session_state.active_tab:
-            st.session_state[nav_key] = tab_names[st.session_state.active_tab]
+    if st.session_state.pop('_force_tab_switch', False):
+        st.session_state[nav_key] = tab_names[st.session_state.active_tab]
 
-    # Wrap navigation in a container to apply specific styling
     st.markdown('<div class="tab-navigation">', unsafe_allow_html=True)
     selected = st.radio(
         "Navigation",
@@ -1234,7 +1229,7 @@ def main():
     )
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # Sync active_tab from the radio selection
+    # Radio is source of truth for normal clicks
     st.session_state.active_tab = tab_names.index(selected)
 
     st.markdown("---")
@@ -2375,6 +2370,7 @@ def display_configs(configs, sf_conn):
                     st.session_state.prefill_channel = config.get('CHANNEL', '') or ''
                     st.session_state.prefill_territory = config.get('TERRITORY', '') or ''
                     st.session_state.active_tab = 2
+                    st.session_state._force_tab_switch = True
                     st.rerun()
 
                 if st.button("✏️ Edit", key=f"edit_{config['CONFIG_ID']}", width='stretch'):
@@ -2402,6 +2398,7 @@ def display_configs(configs, sf_conn):
                         st.session_state.filename = None
 
                     st.session_state.active_tab = 0
+                    st.session_state._force_tab_switch = True
                     st.rerun()
 
                 if st.button("🗑️ Delete", key=f"delete_{config['CONFIG_ID']}", width='stretch'):
