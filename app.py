@@ -1212,7 +1212,7 @@ def main():
 
     # Tabs for different functionalities with session state
     # Use radio buttons styled as tabs to preserve state across reruns
-    tab_names = ["📤 Upload & Map", "🔍 Search & Edit", "📥 Load Data"]
+    tab_names = ["📤 Upload & Map", "🔍 Template Lookup", "📥 Load Data"]
 
     # Create a callback to update active tab
     def set_active_tab():
@@ -2179,7 +2179,7 @@ def upload_and_map_tab(sf_conn):
                                             st.rerun()
                                     with col_no:
                                         if st.button("❌ Cancel", use_container_width=True):
-                                            st.info("Save cancelled. You can edit the existing config in the 'Search & Edit' tab.")
+                                            st.info("Save cancelled. You can edit the existing config in the 'Template Lookup' tab.")
                                 else:
                                     # No existing config - safe to insert
                                     sf_conn.insert_config(config_data)
@@ -2224,59 +2224,102 @@ def upload_and_map_tab(sf_conn):
         except Exception as e:
             st.error(f"Error reading file: {str(e)}")
 
-def search_and_edit_tab(sf_conn):
-    """Tab for searching and editing existing configurations"""
-    st.header("Search & Edit Configurations")
+def _fuzzy_match_configs(configs, query):
+    """Score and filter configs by fuzzy matching a free-text query against all fields."""
+    query_lower = query.lower().strip()
+    tokens = query_lower.split()
+    scored = []
+    for config in configs:
+        # Build a searchable blob from all relevant fields
+        searchable_parts = [
+            config.get('PLATFORM', ''),
+            config.get('PARTNER', ''),
+            config.get('CHANNEL', '') or '',
+            config.get('TERRITORY', '') or '',
+            config.get('DOMAIN', '') or '',
+            config.get('DATA_TYPE', '') or '',
+        ]
+        territories = config.get('TERRITORIES', [])
+        if territories:
+            searchable_parts.extend(territories)
 
-    # Search options
-    search_method = st.radio(
-        "Search by:",
-        ["Platform & Partner", "View All"],
-        horizontal=True
+        blob = ' '.join(searchable_parts).lower()
+
+        # Score: each token that appears as substring gets a point
+        token_hits = sum(1 for t in tokens if t in blob)
+        if token_hits == 0:
+            continue
+
+        # Bonus for exact field matches
+        exact_bonus = 0
+        for t in tokens:
+            for part in searchable_parts:
+                if t == part.lower():
+                    exact_bonus += 2
+                elif t in part.lower():
+                    exact_bonus += 0.5
+
+        # Fuzzy similarity bonus
+        fuzzy_bonus = SequenceMatcher(None, query_lower, blob).ratio()
+
+        score = token_hits + exact_bonus + fuzzy_bonus
+        scored.append((score, config))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [c for _, c in scored]
+
+
+def search_and_edit_tab(sf_conn):
+    """Tab for looking up and searching existing configuration templates"""
+    st.header("Template Lookup")
+    st.caption("Search for upload templates by typing any combination of platform, partner, channel, or territory. Results are fuzzy-matched so you don't need exact names.")
+
+    # Free-text fuzzy search
+    search_query = st.text_input(
+        "Search templates",
+        placeholder="e.g. tubi, pluto nosey, xumo vod, freevee united states...",
+        help="Type any keywords — platform name, partner, channel, territory, etc. Matching is forgiving."
     )
 
-    if search_method == "Platform & Partner":
-        col1, col2, col3 = st.columns([2, 2, 1])
+    # Also allow browsing all
+    show_all = st.checkbox("Show all templates", value=not bool(search_query))
 
-        with col1:
-            search_platform = st.text_input("Platform")
-        with col2:
-            partners = get_cached_partners(sf_conn)
-            if partners:
-                search_partner = st.selectbox(
-                    "Partner",
-                    options=[""] + partners
-                )
-            else:
-                search_partner = st.text_input("Partner")
-        with col3:
-            st.write("")  # Spacer
-            st.write("")  # Spacer
-            search_button = st.button("🔍 Search", type="primary")
-
-        if search_button and (search_platform or search_partner):
-            configs = sf_conn.search_configs(search_platform, search_partner)
-            display_configs(configs, sf_conn)
-        elif search_button:
-            st.warning("Please enter at least one search criterion.")
-
-    else:  # View All
-        configs = sf_conn.get_all_configs()
-        display_configs(configs, sf_conn)
-
-def display_configs(configs, sf_conn):
-    """Display configurations in a table with edit/delete options"""
-    if not configs:
-        st.info("No configurations found.")
+    try:
+        all_configs = sf_conn.get_all_configs()
+    except Exception as e:
+        st.error(f"Error loading templates: {str(e)}")
         return
 
-    st.subheader(f"Found {len(configs)} configuration(s)")
+    if search_query and search_query.strip():
+        configs = _fuzzy_match_configs(all_configs, search_query)
+    elif show_all:
+        configs = all_configs
+    else:
+        configs = []
+
+    display_configs(configs, sf_conn)
+
+def display_configs(configs, sf_conn):
+    """Display configurations with details, edit, delete, and use-for-upload actions"""
+    if not configs:
+        st.info("No templates found. Try a different search or check 'Show all templates'.")
+        return
+
+    st.subheader(f"Found {len(configs)} template(s)")
+
+    data_type_labels = {
+        "Viewership": "Hours/Mins by Episode",
+        "Revenue": "Revenue by Episode"
+    }
 
     for idx, config in enumerate(configs):
-        # Display partner as "(platform-wide)" if it's "DEFAULT"
         partner_display = config['PARTNER'] if config['PARTNER'] != 'DEFAULT' else '(platform-wide)'
+        data_type_display = data_type_labels.get(config.get('DATA_TYPE', ''), config.get('DATA_TYPE', ''))
+        label_parts = [config['PLATFORM'], partner_display]
+        if data_type_display:
+            label_parts.append(data_type_display)
 
-        with st.expander(f"📄 {config['PLATFORM']} - {partner_display} (ID: {config['CONFIG_ID']})"):
+        with st.expander(f"📄 {' — '.join(label_parts)}"):
             col1, col2 = st.columns([3, 1])
 
             with col1:
@@ -2286,32 +2329,27 @@ def display_configs(configs, sf_conn):
                     st.markdown(f"**Channel:** {config['CHANNEL']}")
                 if config.get('TERRITORY'):
                     st.markdown(f"**Territory:** {config['TERRITORY']}")
+                territories = config.get('TERRITORIES', [])
+                if territories:
+                    st.markdown(f"**Territories:** {', '.join(territories)}")
                 if config.get('DOMAIN'):
                     st.markdown(f"**Domain:** {config['DOMAIN']}")
-
-                # Show data type with user-friendly label
-                if config.get('DATA_TYPE'):
-                    data_type_reverse_map = {
-                        "Viewership": "Hours/Mins by Episode",
-                        "Revenue": "Revenue by Episode"
-                    }
-                    data_type_display = data_type_reverse_map.get(config.get('DATA_TYPE'), config.get('DATA_TYPE'))
+                if data_type_display:
                     st.markdown(f"**Data Type:** {data_type_display}")
 
                 st.markdown(f"**Created:** {config['CREATED_DATE']}")
+                if config.get('UPDATED_DATE'):
+                    st.markdown(f"**Updated:** {config['UPDATED_DATE']}")
 
                 st.markdown("**Column Mappings:**")
-                # Normalize values for display (handle both string and dict formats)
                 mappings_list = []
                 for k, v in config['COLUMN_MAPPINGS'].items():
                     if isinstance(v, dict):
-                        # Extract source column and add transformation indicator
                         source = v.get('source_column', str(v))
                         if 'transformation' in v:
                             source = f"{source} (transformed)"
                         mappings_list.append({"Required Field": k, "Mapped Column": source})
                     else:
-                        # Simple string value
                         mappings_list.append({"Required Field": k, "Mapped Column": str(v)})
 
                 mappings_df = pd.DataFrame(mappings_list)
@@ -2323,17 +2361,26 @@ def display_configs(configs, sf_conn):
 
             with col2:
                 st.write("")  # Spacer
+
+                # Use for Upload button — pre-fills Load Data tab
+                if st.button("📤 Use for Upload", key=f"use_{config['CONFIG_ID']}", use_container_width=True, type="primary"):
+                    st.session_state.prefill_platform = config['PLATFORM']
+                    st.session_state.prefill_partner = config['PARTNER'] if config['PARTNER'] != 'DEFAULT' else ''
+                    st.session_state.prefill_channel = config.get('CHANNEL', '') or ''
+                    st.session_state.prefill_territory = config.get('TERRITORY', '') or ''
+                    st.session_state.active_tab = 2
+                    st.session_state.selected_tab = "📥 Load Data"
+                    st.rerun()
+
                 if st.button("✏️ Edit", key=f"edit_{config['CONFIG_ID']}", use_container_width=True):
                     st.session_state.existing_config = config
                     st.session_state.edit_mode = True
                     st.session_state.config_id = config['CONFIG_ID']
 
-                    # Load metadata into session state
                     partner_display = config['PARTNER'] if config['PARTNER'] != 'DEFAULT' else "(platform-wide)"
                     st.session_state.platform = config['PLATFORM']
                     st.session_state.partner = config['PARTNER'] if config['PARTNER'] != 'DEFAULT' else ""
                     st.session_state.channel = config.get('CHANNEL', '')
-                    # Load territories array if available, otherwise fallback to single territory for backward compatibility
                     territories_from_config = config.get('TERRITORIES', [])
                     if not territories_from_config and config.get('TERRITORY'):
                         territories_from_config = [config.get('TERRITORY')]
@@ -2341,17 +2388,14 @@ def display_configs(configs, sf_conn):
                     st.session_state.domain = config.get('DOMAIN', '')
                     st.session_state.data_type = config.get('DATA_TYPE', '')
 
-                    # Load sample data back into dataframe for editing (if available)
                     if config.get('SAMPLE_DATA'):
                         sample_df = pd.DataFrame(config['SAMPLE_DATA'])
                         st.session_state.df = sample_df
                         st.session_state.filename = f"[Loaded from config] {config['PLATFORM']} - {partner_display}"
                     else:
-                        # No sample data - user will need to upload a file to edit mappings
                         st.session_state.df = None
                         st.session_state.filename = None
 
-                    # Switch to Upload & Map tab
                     st.session_state.active_tab = 0
                     st.session_state.selected_tab = "📤 Upload & Map"
                     st.rerun()
@@ -2849,34 +2893,49 @@ def load_data_tab(sf_conn):
         # Section 1: Find Configuration
         st.subheader("1. Find Configuration Template")
 
+        # Read pre-fill values from Template Lookup (if any)
+        prefill_platform = st.session_state.pop('prefill_platform', '')
+        prefill_partner = st.session_state.pop('prefill_partner', '')
+        prefill_channel = st.session_state.pop('prefill_channel', '')
+        prefill_territory = st.session_state.pop('prefill_territory', '')
+
         # Platform at the top
         platforms = get_cached_platforms(sf_conn)
         if platforms:
+            plat_opts = [""] + platforms
+            plat_idx = plat_opts.index(prefill_platform) if prefill_platform in plat_opts else 0
             platform = st.selectbox(
                 "Platform *",
-                options=[""] + platforms,
+                options=plat_opts,
+                index=plat_idx,
                 help="Required. Select the platform for this data"
             )
         else:
-            platform = st.text_input("Platform *", help="Required. Enter the platform name")
+            platform = st.text_input("Platform *", value=prefill_platform, help="Required. Enter the platform name")
 
         # Partner (optional)
         partners = get_cached_partners(sf_conn)
         if partners:
+            part_opts = [""] + partners
+            part_idx = part_opts.index(prefill_partner) if prefill_partner in part_opts else 0
             partner = st.selectbox(
                 "Partner (optional)",
-                options=[""] + partners,
+                options=part_opts,
+                index=part_idx,
                 help="Optional. Select a partner from the list or leave blank for platform-wide template"
             )
         else:
-            partner = st.text_input("Partner (optional)", help="Optional. Enter partner name or leave blank for platform-wide template")
+            partner = st.text_input("Partner (optional)", value=prefill_partner, help="Optional. Enter partner name or leave blank for platform-wide template")
 
         # Channel dropdown (optional)
         channels = get_cached_channels(sf_conn)
         if channels:
+            chan_opts = [""] + channels
+            chan_idx = chan_opts.index(prefill_channel) if prefill_channel in chan_opts else 0
             channel = st.selectbox(
                 "Channel (optional)",
-                options=[""] + channels,
+                options=chan_opts,
+                index=chan_idx,
                 help="Optional. Filter by channel"
             )
         else:
@@ -2885,9 +2944,12 @@ def load_data_tab(sf_conn):
         # Territory dropdown (optional)
         territories = get_cached_territories(sf_conn)
         if territories:
+            terr_opts = [""] + territories
+            terr_idx = terr_opts.index(prefill_territory) if prefill_territory in terr_opts else 0
             territory = st.selectbox(
                 "Territory (optional)",
-                options=[""] + territories,
+                options=terr_opts,
+                index=terr_idx,
                 help="Optional. Filter by territory"
             )
         else:
@@ -2905,7 +2967,7 @@ def load_data_tab(sf_conn):
         quarter = st.selectbox(
             "Quarter *",
             options=["Q1", "Q2", "Q3", "Q4"],
-            index=0,  # Default to Q1
+            index=2,  # Default to Q3
             help="Required. Select the quarter for this data"
         )
 
