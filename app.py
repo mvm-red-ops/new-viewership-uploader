@@ -2894,49 +2894,52 @@ def load_data_tab(sf_conn):
         # Section 1: Find Configuration
         st.subheader("1. Find Configuration Template")
 
-        # Read pre-fill values from Template Lookup (if any)
-        prefill_platform = st.session_state.pop('prefill_platform', '')
-        prefill_partner = st.session_state.pop('prefill_partner', '')
-        prefill_channel = st.session_state.pop('prefill_channel', '')
-        prefill_territory = st.session_state.pop('prefill_territory', '')
+        # Apply pre-fill values from Template Lookup into widget keys
+        if 'prefill_platform' in st.session_state:
+            pf = st.session_state.pop('prefill_platform')
+            if pf:
+                st.session_state['load_platform'] = pf
+            pp = st.session_state.pop('prefill_partner', '')
+            if pp:
+                st.session_state['load_partner'] = pp
+            pc = st.session_state.pop('prefill_channel', '')
+            if pc:
+                st.session_state['load_channel'] = pc
+            pt = st.session_state.pop('prefill_territory', '')
+            if pt:
+                st.session_state['load_territory'] = pt
 
         # Platform at the top
         platforms = get_cached_platforms(sf_conn)
         if platforms:
-            plat_opts = [""] + platforms
-            plat_idx = plat_opts.index(prefill_platform) if prefill_platform in plat_opts else 0
             platform = st.selectbox(
                 "Platform *",
-                options=plat_opts,
-                index=plat_idx,
+                options=[""] + platforms,
+                key="load_platform",
                 help="Required. Select the platform for this data"
             )
         else:
-            platform = st.text_input("Platform *", value=prefill_platform, help="Required. Enter the platform name")
+            platform = st.text_input("Platform *", key="load_platform", help="Required. Enter the platform name")
 
         # Partner (optional)
         partners = get_cached_partners(sf_conn)
         if partners:
-            part_opts = [""] + partners
-            part_idx = part_opts.index(prefill_partner) if prefill_partner in part_opts else 0
             partner = st.selectbox(
                 "Partner (optional)",
-                options=part_opts,
-                index=part_idx,
+                options=[""] + partners,
+                key="load_partner",
                 help="Optional. Select a partner from the list or leave blank for platform-wide template"
             )
         else:
-            partner = st.text_input("Partner (optional)", value=prefill_partner, help="Optional. Enter partner name or leave blank for platform-wide template")
+            partner = st.text_input("Partner (optional)", key="load_partner", help="Optional. Enter partner name or leave blank for platform-wide template")
 
         # Channel dropdown (optional)
         channels = get_cached_channels(sf_conn)
         if channels:
-            chan_opts = [""] + channels
-            chan_idx = chan_opts.index(prefill_channel) if prefill_channel in chan_opts else 0
             channel = st.selectbox(
                 "Channel (optional)",
-                options=chan_opts,
-                index=chan_idx,
+                options=[""] + channels,
+                key="load_channel",
                 help="Optional. Filter by channel"
             )
         else:
@@ -2945,12 +2948,10 @@ def load_data_tab(sf_conn):
         # Territory dropdown (optional)
         territories = get_cached_territories(sf_conn)
         if territories:
-            terr_opts = [""] + territories
-            terr_idx = terr_opts.index(prefill_territory) if prefill_territory in terr_opts else 0
             territory = st.selectbox(
                 "Territory (optional)",
-                options=terr_opts,
-                index=terr_idx,
+                options=[""] + territories,
+                key="load_territory",
                 help="Optional. Filter by territory"
             )
         else:
