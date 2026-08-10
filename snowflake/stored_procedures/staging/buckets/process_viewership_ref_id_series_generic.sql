@@ -82,7 +82,10 @@ try {
             AND v.ref_id IS NOT NULL
             AND v.internal_series IS NOT NULL
             AND lower(s.status) = ''active''
-            AND LOWER(UPLOAD_DB.public.extract_primary_title(s.titles)) = LOWER(v.internal_series)
+            AND s.series_code IN (
+                SELECT DISTINCT d.series_code FROM dictionary.public.series d
+                WHERE LOWER(d.series) = LOWER(v.internal_series)
+            )
             ${filenameArg ? `AND v.filename = ''${filenameArg.replace(/''/g, "''''")}''` : ''''}
 
         UNION
@@ -106,7 +109,10 @@ try {
             AND v.ref_id IS NOT NULL
             AND v.internal_series IS NOT NULL
             AND lower(s.status) = ''active''
-            AND LOWER(UPLOAD_DB.public.extract_primary_title(s.titles)) = LOWER(v.internal_series)
+            AND s.series_code IN (
+                SELECT DISTINCT d.series_code FROM dictionary.public.series d
+                WHERE LOWER(d.series) = LOWER(v.internal_series)
+            )
             ${filenameArg ? `AND v.filename = ''${filenameArg.replace(/''/g, "''''")}''` : ''''}
             -- Exclude records already matched in first attempt
             AND NOT EXISTS (
