@@ -98,16 +98,32 @@ def load_snowflake_config() -> Dict[str, Any]:
         Dictionary with Snowflake connection parameters
     """
     config = get_config()
+    sf_secrets = st.secrets['snowflake']
 
-    return {
-        'user': st.secrets['snowflake']['user'],
-        'password': st.secrets['snowflake']['password'],
-        'account': st.secrets['snowflake']['account'],
-        'warehouse': st.secrets['snowflake']['warehouse'],
+    result = {
+        'user': sf_secrets['user'],
+        'account': sf_secrets['account'],
+        'warehouse': sf_secrets['warehouse'],
         'database': config.SNOWFLAKE_DATABASE,
         'schema': config.SNOWFLAKE_SCHEMA,
-        'role': 'WEB_APP'  # Use WEB_APP role for CREATE PROCEDURE privileges
+        'role': 'WEB_APP'
     }
+
+    if 'private_key_b64' in sf_secrets:
+        import base64
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.backends import default_backend
+        pk_pem = base64.b64decode(sf_secrets['private_key_b64'])
+        p_key = serialization.load_pem_private_key(pk_pem, password=None, backend=default_backend())
+        result['private_key'] = p_key.private_bytes(
+            encoding=serialization.Encoding.DER,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption()
+        )
+    else:
+        result['password'] = sf_secrets['password']
+
+    return result
 
 
 def load_aws_config() -> Dict[str, Any]:
